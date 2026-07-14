@@ -546,6 +546,9 @@ async function fetchAdditionalMarkets(eventId: string): Promise<OddsApiMarket[]>
 }
 
 class OddsApiProvider implements MatchProvider {
+  readonly id = "the-odds-api";
+  readonly externalIdPrefix = "odds-api-";
+
   async listUpcomingMatches(): Promise<MatchDTO[]> {
     const apiKey = requireApiKey();
 
