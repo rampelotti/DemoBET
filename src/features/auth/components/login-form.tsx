@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { trackLogin } from "@/lib/analytics/gtm";
 
 export function LoginForm() {
   const router = useRouter();
@@ -40,6 +41,7 @@ export function LoginForm() {
       return;
     }
 
+    trackLogin();
     router.push(searchParams.get("callbackUrl") ?? "/");
     router.refresh();
   }

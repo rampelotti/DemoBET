@@ -1,7 +1,10 @@
+"use client";
+
 import Link from "next/link";
 import { ArrowRight, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { trackCtaClick } from "@/lib/analytics/gtm";
 
 interface SocialPromoBannerProps {
   isLoggedIn: boolean;
@@ -27,7 +30,15 @@ export function SocialPromoBanner({ isLoggedIn }: SocialPromoBannerProps) {
         </div>
 
         <Button asChild size="lg" className="shrink-0 gap-2">
-          <Link href={isLoggedIn ? "/social" : "/register"}>
+          <Link
+            href={isLoggedIn ? "/social" : "/register"}
+            onClick={() =>
+              trackCtaClick(
+                isLoggedIn ? "banner_fantasy" : "banner_register_fantasy",
+                isLoggedIn ? "Explorar Fantasy" : "Criar conta grátis"
+              )
+            }
+          >
             {isLoggedIn ? "Explorar Fantasy" : "Criar conta grátis"}
             <ArrowRight className="h-4 w-4" />
           </Link>

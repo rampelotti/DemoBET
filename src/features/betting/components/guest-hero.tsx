@@ -1,8 +1,11 @@
+"use client";
+
 import Link from "next/link";
 import { ArrowRight, ShieldCheck, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { trackCtaClick } from "@/lib/analytics/gtm";
 
 export function GuestHero() {
   return (
@@ -26,13 +29,18 @@ export function GuestHero() {
 
         <div className="flex flex-wrap items-center gap-3 pt-2">
           <Button asChild size="lg">
-            <Link href="/register">
+            <Link
+              href="/register"
+              onClick={() => trackCtaClick("hero_register", "Criar conta grátis")}
+            >
               Criar conta grátis
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
           <Button asChild variant="outline" size="lg">
-            <Link href="/login">Já tenho conta</Link>
+            <Link href="/login" onClick={() => trackCtaClick("hero_login", "Já tenho conta")}>
+              Já tenho conta
+            </Link>
           </Button>
         </div>
 

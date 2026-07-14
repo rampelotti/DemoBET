@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { registerUser } from "@/features/auth/actions/register";
+import { trackSignUp } from "@/lib/analytics/gtm";
 
 export function RegisterForm() {
   const router = useRouter();
@@ -48,6 +49,7 @@ export function RegisterForm() {
       return;
     }
 
+    trackSignUp();
     router.push("/");
     router.refresh();
   }

@@ -2,6 +2,7 @@ import { Suspense } from "react";
 
 import { ParticleBackground } from "@/components/shared/particle-background";
 import { Separator } from "@/components/ui/separator";
+import { SiteFooter } from "@/components/layout/site-footer";
 import { SiteHeader } from "@/components/layout/site-header";
 import { BetSlip } from "@/features/betting/components/bet-slip";
 import { getCurrentUser } from "@/features/auth/data/get-current-user";
@@ -34,6 +35,7 @@ export default async function SportsbookLayout({
 
         <main className="min-w-0 flex-1 overflow-y-auto p-4 pb-24 sm:p-6 xl:pb-6">
           {children}
+          <SiteFooter />
         </main>
 
         <aside className="hidden w-80 shrink-0 overflow-y-auto border-l border-border bg-background xl:block">

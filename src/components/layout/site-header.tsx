@@ -81,7 +81,7 @@ export function SiteHeader({ user, coinsBalance }: SiteHeaderProps) {
         <div className="ml-auto flex items-center gap-2">
           <Badge className="hidden sm:inline-flex">
             <Sparkles className="h-3.5 w-3.5" />
-            Modo Simulação
+            Beta · Simulação
           </Badge>
 
           {user ? (

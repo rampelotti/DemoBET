@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { placeBet } from "@/features/betting/actions/place-bet";
+import { trackPlaceBet } from "@/lib/analytics/gtm";
 import { DEFAULT_STAKE, useBetSlipStore, type BetSlipSelection } from "@/store/bet-slip-store";
 import { cn } from "@/lib/utils";
 
@@ -90,6 +91,11 @@ export function BetSlip() {
 
       setFeedback(result);
       if (result.success) {
+        trackPlaceBet({
+          selectionsCount: selections.length,
+          totalStake,
+          groupCount: groups.length,
+        });
         clear();
         router.refresh();
       }

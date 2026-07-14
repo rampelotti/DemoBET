@@ -4,15 +4,15 @@ import { theOddsProvider } from "@/lib/providers/the-odds-provider";
 
 /**
  * Provider ativo da aplicação. Controlado por `ODDS_PROVIDER` no `.env`:
- *   - `mock` (padrão) → MockOddsProvider
- *   - `the-odds-api` → TheOddsProvider (integração existente, pausada por padrão)
+ *   - `the-odds-api` (MVP atual) → França x Espanha via Pinnacle + cache longo
+ *   - `mock` → MockOddsProvider (dados locais, sem cota)
  */
 export function getActiveOddsProvider(): OddsProvider {
-  const source = (process.env.ODDS_PROVIDER ?? "mock").toLowerCase();
+  const source = (process.env.ODDS_PROVIDER ?? "the-odds-api").toLowerCase();
 
-  if (source === "the-odds-api" || source === "odds-api") {
-    return theOddsProvider;
+  if (source === "mock") {
+    return mockOddsProvider;
   }
 
-  return mockOddsProvider;
+  return theOddsProvider;
 }

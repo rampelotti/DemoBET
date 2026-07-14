@@ -2,6 +2,7 @@
 
 import { OddButton } from "@/features/betting/components/odd-button";
 import type { MatchWithMarkets } from "@/features/betting/types";
+import { trackAddToSlip } from "@/lib/analytics/gtm";
 import { useBetSlipStore } from "@/store/bet-slip-store";
 
 interface MarketOddsRowProps {
@@ -31,7 +32,8 @@ export function MarketOddsRow({ match, market, showLabel = true }: MarketOddsRow
             label={odd.label}
             value={odd.value}
             isSelected={selections.some((selection) => selection.oddId === odd.id)}
-            onClick={() =>
+            onClick={() => {
+              const alreadySelected = selections.some((selection) => selection.oddId === odd.id);
               toggleSelection({
                 oddId: odd.id,
                 matchId: match.id,
@@ -40,8 +42,15 @@ export function MarketOddsRow({ match, market, showLabel = true }: MarketOddsRow
                 marketLabel: market.label,
                 selectionLabel: odd.label,
                 oddValue: odd.value,
-              })
-            }
+              });
+              if (!alreadySelected) {
+                trackAddToSlip({
+                  matchId: match.id,
+                  marketType: market.type,
+                  oddValue: odd.value,
+                });
+              }
+            }}
           />
         ))}
       </div>

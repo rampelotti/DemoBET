@@ -1,98 +1,45 @@
 import { SPORTS, type MarketDTO, type MatchDTO, type OddDTO } from "@/features/betting/types";
+import { ODDS_API_MVP_CONFIG } from "@/lib/providers/odds-api-mvp-config";
 import type { MatchProvider } from "@/lib/providers/match-provider";
 import { slugify } from "@/lib/slug";
 
 /**
- * Integração com a The Odds API (https://the-odds-api.com).
+ * Integração com a The Odds API (https://the-odds-api.com) — MVP.
  *
- * Mantida deliberadamente enxuta em requisições:
- *  - 1 esporte (futebol / Copa do Mundo)
- *  - 1 partida específica (semifinal França x Espanha)
- *  - odds em cache (`next.revalidate`), sem polling manual
- *  - odds vêm sempre da Pinnacle (`PREFERRED_BOOKMAKER`), para manter uma
- *    fonte única e consistente em vez de misturar linhas de casas
- *    diferentes. Se a Pinnacle não cobrir a partida, cai para qualquer
- *    outra casa disponível (ver `pickMarketsFromBookmakers`).
+ * Regras deste MVP:
+ *  - 1 partida: França x Espanha (ver `odds-api-mvp-config.ts`)
+ *  - 1 bookmaker: Pinnacle apenas (sem fallback para outras casas)
+ *  - Backend-only: o frontend nunca chama esta API
+ *  - Cache em memória (por processo) + Postgres (`matches.updatedAt`) como
+ *    cache compartilhado entre todos os usuários no Vercel
+ *  - Após o `commence_time`, não há refresh de odds
+ *  - Sem websocket / polling
  *
- * Duas chamadas por importação:
- *  1. `/odds` (mercados "featured": h2h + totals) — custo fixo, sempre 2
- *     créditos (2 mercados x 1 região).
- *  2. `/events/{id}/odds` (todos os mercados "additional" que a API tem
- *     para futebol: 1º tempo, escanteios, cartões, qualificação, placar
- *     exato, dupla chance, props de jogador etc.) — custo variável, só
- *     paga pelos mercados que a API de fato devolver (ver `ADDITIONAL_MARKETS`).
+ * Chamadas por refresh (quando o TTL do DB/expira e o jogo ainda não começou):
+ *  1. `GET /events` — lista eventos sem odds (não consome cota) → achar o jogo
+ *  2. `GET /events/{id}/odds` — todos os mercados pedidos + bookmakers=pinnacle
  *
- * Limitação conhecida: a liquidação automática (`settle-match-core.ts`) usa
- * só o placar final (`/scores`). Mercados que dependem de dados que essa
- * fonte não tem — 1º tempo, escanteios, cartões, artilheiro — não podem ser
- * resolvidos corretamente e caem no fallback seguro (VOID = aposta anulada
- * e valor devolvido) em `resolve-selection-result.ts`, em vez de resolver
- * errado. "Quem se classifica", "dupla chance" e "placar exato" já são
- * resolvidos de verdade, pois dependem só do placar final.
- *
- * Esse provider alimenta o fluxo real de partidas em
- * `matches-repository.ts` (Home só mostra partidas vindas daqui, por
- * decisão temporária do produto). `fetchOddsApiScores` é usado
- * separadamente para liquidar partidas automaticamente quando terminam.
+ * Liquidação (`/scores`) continua separada e só roda quando a partida já
+ * deveria ter acabado (ver `matches-repository.ts`).
  */
 
 const ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4";
+const SPORT_KEY = ODDS_API_MVP_CONFIG.sportKey;
+const PREFERRED_BOOKMAKER = ODDS_API_MVP_CONFIG.bookmaker;
+const CACHE_TTL_MS = ODDS_API_MVP_CONFIG.cacheTtlMs;
+const CACHE_TTL_SECONDS = Math.ceil(CACHE_TTL_MS / 1000);
+const ALL_MARKETS = ODDS_API_MVP_CONFIG.markets;
 
-// Chave de esporte da The Odds API para a Copa do Mundo FIFA.
-const SPORT_KEY = "soccer_fifa_world_cup";
+interface OddsListCache {
+  matches: MatchDTO[];
+  fetchedAt: number;
+  commenceTimeMs: number | null;
+}
 
-// Preferimos sempre a mesma casa de apostas, para não misturar linhas/vig
-// de bookmakers diferentes na mesma partida.
-const PREFERRED_BOOKMAKER = "pinnacle";
-
-// Mercados "featured", buscados de uma vez para todos os jogos do esporte.
-const FEATURED_MARKETS = ["h2h", "totals"] as const;
-
-// Mercados "additional" (só via endpoint por evento). Pedimos tudo que é
-// relevante para futebol; o que a Pinnacle não tiver para essa partida
-// simplesmente não aparece na resposta (e não é cobrado da cota).
-const ADDITIONAL_MARKETS = [
-  // Partida (tempo normal)
-  "btts",
-  "draw_no_bet",
-  "team_totals",
-  "alternate_totals",
-  "alternate_team_totals",
-  "spreads",
-  "alternate_spreads",
-  "double_chance",
-  "correct_score",
-  "halftime_fulltime",
-  "to_qualify",
-  // 1º tempo
-  "h2h_h1",
-  "spreads_h1",
-  "alternate_spreads_h1",
-  "totals_h1",
-  "alternate_totals_h1",
-  "team_totals_h1",
-  "alternate_team_totals_h1",
-  "btts_h1",
-  "correct_score_h1",
-  "double_chance_h1",
-  // Escanteios
-  "corners_1x2",
-  "alternate_spreads_corners",
-  "alternate_totals_corners",
-  "alternate_team_totals_corners",
-  // Cartões
-  "alternate_spreads_cards",
-  "alternate_totals_cards",
-  // Props de jogador
-  "player_goal_scorer_anytime",
-  "player_first_goal_scorer",
-  "player_last_goal_scorer",
-  "player_to_receive_card",
-  "player_to_receive_red_card",
-  "player_shots_on_target",
-  "player_shots",
-  "player_assists",
-] as const;
+/** Cache compartilhado entre requests no mesmo processo Node (warmup). */
+let listCache: OddsListCache | null = null;
+/** Evita fan-out de requisições paralelas no mesmo cold start. */
+let listInFlight: Promise<MatchDTO[]> | null = null;
 
 interface OddsApiOutcome {
   name: string;
@@ -135,37 +82,17 @@ export interface OddsApiScoreEvent {
 }
 
 /**
- * Escolhe, para cada mercado desejado, a versão da Pinnacle. Se a Pinnacle
- * não cobrir a partida/região nesta consulta, cai para a primeira outra
- * bookmaker que tiver cada mercado — melhor odds "de outra casa" do que
- * mercado nenhum.
+ * Usa exclusivamente mercados da Pinnacle. Se a Pinnacle não cobrir um
+ * mercado, ele simplesmente não entra — sem misturar outras casas.
  */
-function pickMarketsFromBookmakers(
-  bookmakers: OddsApiBookmaker[],
-  marketKeys: readonly string[]
-): OddsApiMarket[] {
+function pickPinnacleMarkets(bookmakers: OddsApiBookmaker[]): OddsApiMarket[] {
   const preferred = bookmakers.find((bookmaker) => bookmaker.key === PREFERRED_BOOKMAKER);
-
-  const result: OddsApiMarket[] = [];
-  for (const key of marketKeys) {
-    const fromPreferred = preferred?.markets.find((market) => market.key === key);
-    if (fromPreferred) {
-      result.push(fromPreferred);
-      continue;
-    }
-    if (preferred) continue; // Pinnacle cobre a partida, mas não esse mercado — não mistura com outra casa.
-
-    const fromAnyBookmaker = bookmakers
-      .map((bookmaker) => bookmaker.markets.find((market) => market.key === key))
-      .find((market): market is OddsApiMarket => market !== undefined);
-    if (fromAnyBookmaker) result.push(fromAnyBookmaker);
-  }
-  return result;
+  return preferred?.markets ?? [];
 }
 
-function isTargetMatch(event: OddsApiEvent): boolean {
+function isTargetMatch(event: { home_team: string; away_team: string }): boolean {
   const teams = [event.home_team, event.away_team].map((team) => team.toLowerCase());
-  return teams.includes("france") && teams.includes("spain");
+  return teams.includes(ODDS_API_MVP_CONFIG.targetTeams.a) && teams.includes(ODDS_API_MVP_CONFIG.targetTeams.b);
 }
 
 function typeSafeName(value: string): string {
@@ -292,14 +219,14 @@ function mapLineMarkets(market: OddsApiMarket, typePrefix: string, labelPrefix: 
 
   const markets: MarketDTO[] = [];
   for (const [line, { over, under }] of byLine) {
-    if (!over || !under) continue;
+    if (!over && !under) continue;
+    const odds: OddDTO[] = [];
+    if (over) odds.push({ selection: "OVER", label: `Mais de ${line}`, value: over.price });
+    if (under) odds.push({ selection: "UNDER", label: `Menos de ${line}`, value: under.price });
     markets.push({
       type: `${typePrefix}${line}`,
       label: `${labelPrefix} - Mais/Menos de ${line}`,
-      odds: [
-        { selection: "OVER", label: `Mais de ${line}`, value: over.price },
-        { selection: "UNDER", label: `Menos de ${line}`, value: under.price },
-      ],
+      odds,
     });
   }
 
@@ -327,20 +254,21 @@ function mapTeamLineMarkets(
 
   const markets: MarketDTO[] = [];
   for (const [key, { over, under }] of byTeamAndLine) {
-    if (!over || !under) continue;
+    if (!over && !under) continue;
     const [team, lineStr] = key.split("|");
     const line = Number(lineStr);
     const isHome = team === homeTeam;
     const isAway = team === awayTeam;
     if (!isHome && !isAway) continue;
 
+    const odds: OddDTO[] = [];
+    if (over) odds.push({ selection: "OVER", label: `Mais de ${line}`, value: over.price });
+    if (under) odds.push({ selection: "UNDER", label: `Menos de ${line}`, value: under.price });
+
     markets.push({
       type: `${typePrefix}${isHome ? "HOME" : "AWAY"}_${line}`,
       label: `${labelPrefix} - ${team} - Mais/Menos de ${line}`,
-      odds: [
-        { selection: "OVER", label: `Mais de ${line}`, value: over.price },
-        { selection: "UNDER", label: `Menos de ${line}`, value: under.price },
-      ],
+      odds,
     });
   }
 
@@ -362,17 +290,18 @@ function mapPlayerLineMarkets(market: OddsApiMarket, typePrefix: string, labelPr
 
   const markets: MarketDTO[] = [];
   for (const [key, { over, under }] of byPlayerAndLine) {
-    if (!over || !under) continue;
+    if (!over && !under) continue;
     const [player, lineStr] = key.split("|");
     const line = Number(lineStr);
+
+    const odds: OddDTO[] = [];
+    if (over) odds.push({ selection: "OVER", label: `Mais de ${line}`, value: over.price });
+    if (under) odds.push({ selection: "UNDER", label: `Menos de ${line}`, value: under.price });
 
     markets.push({
       type: `${typePrefix}${typeSafeName(player)}_${line}`,
       label: `${labelPrefix} - ${player} - Mais/Menos de ${line}`,
-      odds: [
-        { selection: "OVER", label: `Mais de ${line}`, value: over.price },
-        { selection: "UNDER", label: `Menos de ${line}`, value: under.price },
-      ],
+      odds,
     });
   }
 
@@ -455,12 +384,64 @@ function mapMarket(market: OddsApiMarket, homeTeam: string, awayTeam: string): M
     case "player_assists":
       return mapPlayerLineMarkets(market, "PLAYER_ASSISTS_", "Assistências do jogador");
 
+    case "spreads":
+    case "alternate_spreads":
+    case "spreads_h1":
+    case "alternate_spreads_h1":
+    case "alternate_spreads_corners":
+    case "alternate_spreads_cards":
+      return mapSpreadMarkets(market, homeTeam, awayTeam, market.key);
+
     default:
-      // "spreads"/"alternate_spreads" (handicap asiático, tempo normal e 1º
-      // tempo) ainda não têm mapeamento — a lógica de meio-gol/push exigiria
-      // liquidação própria que não implementamos ainda.
-      return [];
+      // Exibe qualquer mercado ainda não tipado exatamente como a API mandou.
+      return single(
+        mapPassthroughMarket(
+          market,
+          typeSafeName(market.key),
+          market.key.replace(/_/g, " ")
+        )
+      );
   }
+}
+
+/** Handicap / spreads — uma linha por `point`, com outcomes tal como na API. */
+function mapSpreadMarkets(
+  market: OddsApiMarket,
+  homeTeam: string,
+  awayTeam: string,
+  marketKey: string
+): MarketDTO[] {
+  const byPoint = new Map<number, OddsApiOutcome[]>();
+  for (const outcome of market.outcomes) {
+    if (outcome.point === undefined) continue;
+    const list = byPoint.get(outcome.point) ?? [];
+    list.push(outcome);
+    byPoint.set(outcome.point, list);
+  }
+
+  const prefix = typeSafeName(marketKey);
+  const markets: MarketDTO[] = [];
+
+  for (const [point, outcomes] of byPoint) {
+    const odds: OddDTO[] = outcomes.map((outcome) => {
+      let selection = typeSafeName(outcome.name);
+      if (outcome.name === homeTeam) selection = "HOME";
+      else if (outcome.name === awayTeam) selection = "AWAY";
+      return {
+        selection: `${selection}_${point}`,
+        label: `${outcome.name} (${point > 0 ? `+${point}` : point})`,
+        value: outcome.price,
+      };
+    });
+    if (odds.length === 0) continue;
+    markets.push({
+      type: `${prefix}_${point}`,
+      label: `Handicap ${point}`,
+      odds,
+    });
+  }
+
+  return markets;
 }
 
 function single(market: MarketDTO | null): MarketDTO[] {
@@ -483,7 +464,7 @@ function buildMatch(event: OddsApiEvent, combinedMarkets: OddsApiMarket[]): Matc
   return {
     externalId: `odds-api-${event.id}`,
     sport: SPORTS.FOOTBALL,
-    league: "Copa do Mundo FIFA",
+    league: ODDS_API_MVP_CONFIG.leagueLabel,
     homeTeam: event.home_team,
     awayTeam: event.away_team,
     startTime: new Date(event.commence_time),
@@ -517,32 +498,118 @@ function logQuotaUsage(response: Response, label: string): void {
   );
 }
 
+function shouldServeFromCache(cache: OddsListCache): boolean {
+  const now = Date.now();
+  const matchStarted = cache.commenceTimeMs !== null && now >= cache.commenceTimeMs;
+  if (matchStarted) {
+    // Pós-início: mantém o último snapshot, sem gastar cota.
+    return true;
+  }
+  return now - cache.fetchedAt < CACHE_TTL_MS;
+}
+
+interface OddsApiEventSummary {
+  id: string;
+  sport_key: string;
+  commence_time: string;
+  home_team: string;
+  away_team: string;
+}
+
 /**
- * Busca os mercados "additional" (não-featured) de uma partida específica.
- * Só vale a pena chamar depois de já ter o `eventId` (via `/odds`), porque
- * esse endpoint trabalha 1 evento por vez.
+ * Lista eventos do esporte sem odds — endpoint que não consome cota.
+ * Usado só para achar o ID + horário de França x Espanha.
  */
-async function fetchAdditionalMarkets(eventId: string): Promise<OddsApiMarket[]> {
+async function findTargetEventSummary(): Promise<OddsApiEventSummary | null> {
+  const apiKey = requireApiKey();
+  // Force-cache + revalidate: no Vercel, o Data Cache do Next evita
+  // bater de novo na The Odds API entre instâncias dentro do TTL.
+  const response = await fetch(`${ODDS_API_BASE_URL}/sports/${SPORT_KEY}/events?apiKey=${apiKey}`, {
+    cache: "force-cache",
+    next: { revalidate: CACHE_TTL_SECONDS },
+  });
+
+  logQuotaUsage(response, "findTargetEventSummary (/events — sem odds)");
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`The Odds API /events retornou ${response.status}: ${body}`);
+  }
+
+  const events = (await response.json()) as OddsApiEventSummary[];
+  return events.find(isTargetMatch) ?? null;
+}
+
+/**
+ * Uma única chamada paga: todos os mercados pedidos + só Pinnacle.
+ */
+async function fetchTargetEventOdds(eventId: string): Promise<OddsApiEvent | null> {
   const apiKey = requireApiKey();
 
   const params = new URLSearchParams({
     apiKey,
-    regions: "eu",
-    markets: ADDITIONAL_MARKETS.join(","),
+    regions: ODDS_API_MVP_CONFIG.region,
+    markets: ALL_MARKETS.join(","),
+    bookmakers: PREFERRED_BOOKMAKER,
     oddsFormat: "decimal",
   });
 
   const response = await fetch(
     `${ODDS_API_BASE_URL}/sports/${SPORT_KEY}/events/${eventId}/odds?${params.toString()}`,
-    { next: { revalidate: 3600 } }
+    {
+      cache: "force-cache",
+      next: { revalidate: CACHE_TTL_SECONDS },
+    }
   );
 
-  logQuotaUsage(response, "listUpcomingMatches (/events/{id}/odds — mercados adicionais)");
+  logQuotaUsage(response, "fetchTargetEventOdds (/events/{id}/odds — pinnacle)");
 
-  if (!response.ok) return [];
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`The Odds API /events/${eventId}/odds retornou ${response.status}: ${body}`);
+  }
 
-  const event = (await response.json()) as OddsApiEvent;
-  return pickMarketsFromBookmakers(event.bookmakers ?? [], ADDITIONAL_MARKETS);
+  return (await response.json()) as OddsApiEvent;
+}
+
+async function fetchMatchesFromApi(): Promise<MatchDTO[]> {
+  const summary = await findTargetEventSummary();
+  if (!summary) {
+    console.warn("[the-odds-api] Partida França x Espanha não encontrada em /events.");
+    return [];
+  }
+
+  const commenceTimeMs = new Date(summary.commence_time).getTime();
+  if (Number.isFinite(commenceTimeMs) && Date.now() >= commenceTimeMs) {
+    // Jogo já começou: não gasta cota em odds. Mantém cache antigo se houver.
+    if (listCache?.matches.length) {
+      listCache = { ...listCache, commenceTimeMs, fetchedAt: listCache.fetchedAt };
+      return listCache.matches;
+    }
+    return [];
+  }
+
+  const event = await fetchTargetEventOdds(summary.id);
+  if (!event) return [];
+
+  const pinnacleMarkets = pickPinnacleMarkets(event.bookmakers ?? []);
+  const match = buildMatch(
+    {
+      ...event,
+      commence_time: summary.commence_time,
+      home_team: summary.home_team,
+      away_team: summary.away_team,
+    },
+    pinnacleMarkets
+  );
+
+  const matches = match ? [match] : [];
+  listCache = {
+    matches,
+    fetchedAt: Date.now(),
+    commenceTimeMs: Number.isFinite(commenceTimeMs) ? commenceTimeMs : null,
+  };
+  return matches;
 }
 
 class OddsApiProvider implements MatchProvider {
@@ -550,46 +617,33 @@ class OddsApiProvider implements MatchProvider {
   readonly externalIdPrefix = "odds-api-";
 
   async listUpcomingMatches(): Promise<MatchDTO[]> {
-    const apiKey = requireApiKey();
-
-    const params = new URLSearchParams({
-      apiKey,
-      regions: "eu",
-      markets: FEATURED_MARKETS.join(","),
-      oddsFormat: "decimal",
-    });
-
-    const response = await fetch(`${ODDS_API_BASE_URL}/sports/${SPORT_KEY}/odds?${params.toString()}`, {
-      // Cache de 1h evita repetir a chamada em recarregamentos seguidos
-      // (sem polling/auto-refresh).
-      next: { revalidate: 3600 },
-    });
-
-    logQuotaUsage(response, "listUpcomingMatches (/odds — mercados featured)");
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`The Odds API retornou ${response.status}: ${body}`);
+    if (listCache && shouldServeFromCache(listCache)) {
+      return listCache.matches;
     }
 
-    const events = (await response.json()) as OddsApiEvent[];
-    const targetEvent = events.find(isTargetMatch);
-    if (!targetEvent) return [];
+    if (listInFlight) {
+      return listInFlight;
+    }
 
-    const featuredMarkets = pickMarketsFromBookmakers(targetEvent.bookmakers, FEATURED_MARKETS);
+    listInFlight = fetchMatchesFromApi()
+      .catch((error) => {
+        console.error("[the-odds-api] Falha ao buscar odds:", error);
+        // Em erro, devolve o último cache válido se existir (MVP estável).
+        if (listCache?.matches.length) return listCache.matches;
+        throw error;
+      })
+      .finally(() => {
+        listInFlight = null;
+      });
 
-    const additionalMarkets = await fetchAdditionalMarkets(targetEvent.id).catch(() => []);
-
-    const match = buildMatch(targetEvent, [...featuredMarkets, ...additionalMarkets]);
-    return match ? [match] : [];
+    return listInFlight;
   }
 }
 
 /**
  * Busca placares recentes/atuais na The Odds API, usados para liquidar
- * partidas automaticamente (ver `settleFinishedOddsApiMatches` em
- * `matches-repository.ts`). Cache curto (5min) para permitir detectar o
- * fim da partida sem fazer polling manual.
+ * partidas automaticamente (ver `matches-repository.ts`). TTL mais curto
+ * só depois que o jogo já deve ter acabado — chamado sob demanda, sem polling.
  */
 export async function fetchOddsApiScores(): Promise<OddsApiScoreEvent[]> {
   const apiKey = process.env.ODDS_API_KEY;
