@@ -55,7 +55,7 @@ export function SiteHeader({ user, coinsBalance }: SiteHeaderProps) {
 
   return (
     <header className="z-40 w-full shrink-0 border-b border-border bg-background">
-      <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3 lg:px-6">
+      <div className="flex items-center gap-3 border-b border-border/60 px-3 py-3 pr-[max(0.75rem,env(safe-area-inset-right))] sm:px-4 lg:px-6">
         <Button
           variant="ghost"
           size="icon"
@@ -79,7 +79,7 @@ export function SiteHeader({ user, coinsBalance }: SiteHeaderProps) {
           />
         </form>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-2">
           <Badge className="hidden sm:inline-flex">
             <Sparkles className="h-3.5 w-3.5" />
             Beta · Simulação
@@ -87,17 +87,18 @@ export function SiteHeader({ user, coinsBalance }: SiteHeaderProps) {
 
           {user ? (
             <>
-              <Button asChild variant="ghost" size="sm" className="gap-1.5">
+              {/* No mobile esses atalhos ficam só no menu do avatar — evita cortar o perfil. */}
+              <Button asChild variant="ghost" size="sm" className="hidden gap-1.5 md:inline-flex">
                 <Link
                   href="/social"
                   onClick={() => trackNavClick("header_fantasy", "Fantasy", "/social")}
                 >
                   <Users className="h-4 w-4" />
-                  <span className="hidden sm:inline">Fantasy</span>
+                  <span className="hidden lg:inline">Fantasy</span>
                 </Link>
               </Button>
 
-              <Button asChild size="sm" className="gap-1.5">
+              <Button asChild size="sm" className="hidden gap-1.5 md:inline-flex">
                 <Link
                   href="/dashboard/desempenho"
                   onClick={() =>
@@ -105,31 +106,35 @@ export function SiteHeader({ user, coinsBalance }: SiteHeaderProps) {
                   }
                 >
                   <BarChart3 className="h-4 w-4" />
-                  <span className="hidden sm:inline">Meu Desempenho</span>
+                  <span className="hidden lg:inline">Meu Desempenho</span>
                 </Link>
               </Button>
 
-              <Button asChild variant="ghost" size="sm" className="gap-1.5">
+              <Button asChild variant="ghost" size="sm" className="hidden gap-1.5 md:inline-flex">
                 <Link
                   href="/meus-palpites"
                   onClick={() => trackNavClick("header_my_bets", "Meus palpites", "/meus-palpites")}
                 >
                   <Ticket className="h-4 w-4" />
-                  <span className="hidden sm:inline">Meus palpites</span>
+                  <span className="hidden lg:inline">Meus palpites</span>
                 </Link>
               </Button>
 
-              <div className="hidden items-center gap-2 rounded-full bg-muted px-3 py-1.5 sm:flex">
-                <Coins className="h-4 w-4 text-primary" />
-                <span className="text-sm font-semibold text-foreground">
+              <div className="flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 sm:gap-2 sm:px-3 sm:py-1.5">
+                <Coins className="h-3.5 w-3.5 shrink-0 text-primary sm:h-4 sm:w-4" />
+                <span className="text-xs font-semibold tabular-nums text-foreground sm:text-sm">
                   {(coinsBalance ?? 0).toLocaleString("pt-BR")}
                 </span>
               </div>
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    <Avatar>
+                  <button
+                    type="button"
+                    aria-label="Abrir menu do perfil"
+                    className="flex shrink-0 items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Avatar className="h-9 w-9">
                       <AvatarFallback>{getInitials(displayName.replace(/^@/, ""))}</AvatarFallback>
                     </Avatar>
                   </button>

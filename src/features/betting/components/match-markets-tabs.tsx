@@ -5,6 +5,7 @@ import { ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { COLLAPSE_THRESHOLD, GroupedMarketCard } from "@/features/betting/components/grouped-market-card";
+import { HandicapMarketCard } from "@/features/betting/components/handicap-market-card";
 import { MarketOddsRow } from "@/features/betting/components/market-odds-row";
 import {
   CATEGORY_LABELS,
@@ -23,7 +24,12 @@ type Market = MatchWithMarkets["markets"][number];
 
 type RenderItem =
   | { kind: "single"; key: string; market: Market }
-  | { kind: "group"; key: string; groupLabel: string; markets: Market[] };
+  | { kind: "group"; key: string; groupLabel: string; markets: Market[] }
+  | { kind: "handicap"; key: string; groupLabel: string; markets: Market[] };
+
+function isHandicapGroupLabel(groupLabel: string): boolean {
+  return groupLabel.startsWith("Handicap");
+}
 
 /**
  * Mercados de linha (over/under): "<algo> - Mais/Menos de <linha>".
@@ -100,11 +106,20 @@ function buildRenderItems(markets: Market[]): RenderItem[] {
 
   const groupItems: RenderItem[] = groupOrder.map((groupLabel) => {
     const entries = [...(groupsByLabel.get(groupLabel) ?? [])].sort((a, b) => a.line - b.line);
+    const itemMarkets = entries.map((entry) => entry.market);
+    if (isHandicapGroupLabel(groupLabel)) {
+      return {
+        kind: "handicap" as const,
+        key: `handicap:${groupLabel}`,
+        groupLabel,
+        markets: itemMarkets,
+      };
+    }
     return {
-      kind: "group",
+      kind: "group" as const,
       key: `group:${groupLabel}`,
       groupLabel,
-      markets: entries.map((entry) => entry.market),
+      markets: itemMarkets,
     };
   });
 
@@ -195,17 +210,30 @@ export function MatchMarketsTabs({ match }: MatchMarketsTabsProps) {
       </nav>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        {renderItems.map((item) =>
-          item.kind === "group" ? (
-            <GroupedMarketCard
-              key={item.key}
-              match={match}
-              groupLabel={item.groupLabel}
-              markets={item.markets}
-              expanded={expandedGroups[item.key] ?? false}
-              onToggleExpanded={() => toggleGroup(item.key)}
-            />
-          ) : (
+        {renderItems.map((item) => {
+          if (item.kind === "handicap") {
+            return (
+              <HandicapMarketCard
+                key={item.key}
+                match={match}
+                groupLabel={item.groupLabel}
+                markets={item.markets}
+              />
+            );
+          }
+          if (item.kind === "group") {
+            return (
+              <GroupedMarketCard
+                key={item.key}
+                match={match}
+                groupLabel={item.groupLabel}
+                markets={item.markets}
+                expanded={expandedGroups[item.key] ?? false}
+                onToggleExpanded={() => toggleGroup(item.key)}
+              />
+            );
+          }
+          return (
             <Card
               key={item.key}
               className={cn("border-border/80", item.market.odds.length > 6 && "sm:col-span-2")}
@@ -214,8 +242,8 @@ export function MatchMarketsTabs({ match }: MatchMarketsTabsProps) {
                 <MarketOddsRow match={match} market={item.market} />
               </CardContent>
             </Card>
-          )
-        )}
+          );
+        })}
       </div>
     </div>
   );

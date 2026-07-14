@@ -45,39 +45,47 @@ export function PerformanceBreakdownTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr
-                key={row.label}
-                className="border-b border-border/60 last:border-0 hover:bg-muted/40"
-              >
-                <td className="py-3 pr-4 font-medium text-foreground">{row.label}</td>
-                <td className="py-3 pr-4 text-muted-foreground">{row.bets}</td>
-                <td className="py-3 pr-4 text-muted-foreground">
-                  <span className="text-emerald-600">{row.wins}</span>
-                  <span className="mx-1 text-border">/</span>
-                  <span className="text-primary">{row.losses}</span>
-                </td>
-                <td className="py-3 pr-4 text-muted-foreground">
-                  {percentFormatter.format(row.winRate)}%
-                </td>
-                <td
-                  className={cn(
-                    "py-3 pr-4 font-medium",
-                    row.roi >= 0 ? "text-emerald-600" : "text-primary"
-                  )}
-                >
-                  {percentFormatter.format(row.roi)}%
-                </td>
-                <td
-                  className={cn(
-                    "py-3 font-medium",
-                    row.profitUnits >= 0 ? "text-emerald-600" : "text-primary"
-                  )}
-                >
-                  {unitsFormatter.format(row.profitUnits)} u.
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                  Sem dados neste recorte ainda.
                 </td>
               </tr>
-            ))}
+            ) : (
+              rows.map((row) => (
+                <tr
+                  key={row.label}
+                  className="border-b border-border/60 last:border-0 hover:bg-muted/40"
+                >
+                  <td className="py-3 pr-4 font-medium text-foreground">{row.label}</td>
+                  <td className="py-3 pr-4 text-muted-foreground">{row.bets}</td>
+                  <td className="py-3 pr-4 text-muted-foreground">
+                    <span className="text-emerald-600">{row.wins}</span>
+                    <span className="mx-1 text-border">/</span>
+                    <span className="text-primary">{row.losses}</span>
+                  </td>
+                  <td className="py-3 pr-4 text-muted-foreground">
+                    {percentFormatter.format(row.winRate)}%
+                  </td>
+                  <td
+                    className={cn(
+                      "py-3 pr-4 font-medium",
+                      row.roi >= 0 ? "text-emerald-600" : "text-primary"
+                    )}
+                  >
+                    {percentFormatter.format(row.roi)}%
+                  </td>
+                  <td
+                    className={cn(
+                      "py-3 font-medium",
+                      row.profitUnits >= 0 ? "text-emerald-600" : "text-primary"
+                    )}
+                  >
+                    {unitsFormatter.format(row.profitUnits)} u.
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </CardContent>
