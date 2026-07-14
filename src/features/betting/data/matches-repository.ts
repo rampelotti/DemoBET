@@ -11,7 +11,8 @@ import type { OddsProvider } from "@/lib/providers/odds-provider";
 import { prisma } from "@/lib/prisma";
 import { buildMatchSlug } from "@/lib/slug";
 
-const ASSUMED_MATCH_DURATION_MS = 2.5 * 60 * 60 * 1000;
+/** Uma vez por processo após o fix de pareamento — reimporta odds limpas. */
+let didForceSpreadPairResync = false;
 
 async function generateUniqueMatchSlug(homeTeam: string, awayTeam: string): Promise<string> {
   const baseSlug = buildMatchSlug(homeTeam, awayTeam);
@@ -350,9 +351,11 @@ export async function getUpcomingMatches(sport?: string, search?: string) {
       now - latestSynced.updatedAt.getTime() < ttlMs);
 
   const needsSpreadRepair = await hasBrokenSpreadPairs(prefix);
+  const forcePairResync = !didForceSpreadPairResync;
 
-  if (!hasFreshDbSnapshot || needsSpreadRepair) {
-    if (needsSpreadRepair) invalidateOddsListCache();
+  if (!hasFreshDbSnapshot || needsSpreadRepair || forcePairResync) {
+    if (needsSpreadRepair || forcePairResync) invalidateOddsListCache();
+    didForceSpreadPairResync = true;
     await importMatchesFromProvider(provider).catch((error) => {
       console.error("[matches-repository] Falha ao sincronizar provider:", error);
     });
@@ -410,11 +413,23 @@ export async function getMatchById(matchId: string) {
 }
 
 export async function getMatchBySlug(slug: string) {
-  const match = await prisma.match.findUnique({
+  const matchMeta = await prisma.match.findUnique({
     where: { slug },
-    select: { id: true },
+    select: { id: true, status: true, externalId: true },
   });
-  if (match) await deactivateNonComplementarySpreadOdds(match.id);
+
+  if (matchMeta?.status === "SCHEDULED" && !didForceSpreadPairResync) {
+    const provider = getActiveOddsProvider();
+    if (matchMeta.externalId.startsWith(provider.externalIdPrefix)) {
+      didForceSpreadPairResync = true;
+      invalidateOddsListCache();
+      await importMatchesFromProvider(provider).catch((error) => {
+        console.error("[matches-repository] Falha ao sincronizar provider:", error);
+      });
+    }
+  }
+
+  if (matchMeta) await deactivateNonComplementarySpreadOdds(matchMeta.id);
 
   return prisma.match.findUnique({
     where: { slug },

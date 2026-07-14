@@ -41,6 +41,7 @@ function isHandicapGroupLabel(groupLabel: string): boolean {
  * Mercados de linha (over/under): "<algo> - Mais/Menos de <linha>".
  * Handicaps: "<família> - <linha>" (ex.: "Handicap - -0.5").
  */
+// "Total de escanteios - France - Mais/Menos de 4.5" → grupo por time.
 const LINE_LABEL_PATTERN = /^(.*) - Mais\/Menos de ([\d.]+)$/;
 const HANDICAP_LABEL_PATTERN =
   /^(Handicap(?: de escanteios| de cartões)?(?: - 1º tempo)?|Handicap asiático) - ([+-]?[\d.]+)$/;
@@ -48,6 +49,8 @@ const LEGACY_HANDICAP_LABEL_PATTERN =
   /^(Handicap(?: asiático)?) ([+-]?[\d.]+)$/;
 const SPREAD_TYPE_PATTERN =
   /^(?:ALTERNATE_)?SPREADS(_H1|_CORNERS|_CARDS)?_([+-]?[\d.]+)$/;
+/** Threshold: a partir de 2 linhas no mesmo grupo → layout com slider. */
+const SLIDER_LINE_THRESHOLD = 2;
 
 function groupLabelForSpreadSuffix(suffix: string | undefined): string {
   switch (suffix) {
@@ -113,8 +116,8 @@ function buildRenderItems(markets: Market[]): RenderItem[] {
     const entries = [...(groupsByLabel.get(groupLabel) ?? [])].sort((a, b) => a.line - b.line);
     const itemMarkets = entries.map((entry) => entry.market);
 
-    // Handicap e qualquer bloco com 2+ linhas → slider (cantos, cartões, totais…).
-    if (isHandicapGroupLabel(groupLabel) || itemMarkets.length >= 2) {
+    // Handicap e qualquer bloco com várias linhas → slider (cantos, cartões, totais…).
+    if (isHandicapGroupLabel(groupLabel) || itemMarkets.length >= SLIDER_LINE_THRESHOLD) {
       return {
         kind: "slider" as const,
         key: `slider:${groupLabel}`,
