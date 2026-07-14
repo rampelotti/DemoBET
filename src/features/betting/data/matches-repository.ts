@@ -356,7 +356,9 @@ export async function getUpcomingMatches(sport?: string, search?: string) {
   const forcePairResync = !didForceSpreadPairResync;
 
   if (!hasFreshDbSnapshot || needsSpreadRepair || forcePairResync) {
-    if (needsSpreadRepair || forcePairResync) invalidateOddsListCache();
+    if (needsSpreadRepair || forcePairResync) {
+      invalidateOddsListCache({ allowPostKickoffFetch: true });
+    }
     didForceSpreadPairResync = true;
     await importMatchesFromProvider(provider).catch((error) => {
       console.error("[matches-repository] Falha ao sincronizar provider:", error);
@@ -424,7 +426,7 @@ export async function getMatchBySlug(slug: string) {
     const provider = getActiveOddsProvider();
     if (matchMeta.externalId?.startsWith(provider.externalIdPrefix)) {
       didForceSpreadPairResync = true;
-      invalidateOddsListCache();
+      invalidateOddsListCache({ allowPostKickoffFetch: true });
       await importMatchesFromProvider(provider).catch((error) => {
         console.error("[matches-repository] Falha ao sincronizar provider:", error);
       });

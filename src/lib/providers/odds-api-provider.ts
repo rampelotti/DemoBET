@@ -41,7 +41,12 @@ let listCache: OddsListCache | null = null;
 /** Evita fan-out de requisições paralelas no mesmo cold start. */
 let listInFlight: Promise<MatchDTO[]> | null = null;
 /** Bust do Data Cache do Next após correção do pareamento de handicaps. */
-const ODDS_FETCH_CACHE_BUST = "spreadPairV2";
+const ODDS_FETCH_CACHE_BUST = "spreadPairV3";
+/**
+ * Permite uma busca paga mesmo após o kickoff (reparo de pares inventados
+ * no Postgres). Consome o flag ao usar.
+ */
+let allowPostKickoffOddsFetch = false;
 
 interface OddsApiOutcome {
   name: string;
@@ -637,13 +642,17 @@ async function fetchMatchesFromApi(): Promise<MatchDTO[]> {
   }
 
   const commenceTimeMs = new Date(summary.commence_time).getTime();
-  if (Number.isFinite(commenceTimeMs) && Date.now() >= commenceTimeMs) {
+  const kickoffPassed = Number.isFinite(commenceTimeMs) && Date.now() >= commenceTimeMs;
+  if (kickoffPassed && !allowPostKickoffOddsFetch) {
     // Jogo já começou: não gasta cota em odds. Mantém cache antigo se houver.
     if (listCache?.matches.length) {
       listCache = { ...listCache, commenceTimeMs, fetchedAt: listCache.fetchedAt };
       return listCache.matches;
     }
     return [];
+  }
+  if (allowPostKickoffOddsFetch) {
+    allowPostKickoffOddsFetch = false;
   }
 
   const event = await fetchTargetEventOdds(summary.id);
@@ -722,6 +731,9 @@ export async function fetchOddsApiScores(): Promise<OddsApiScoreEvent[]> {
 export const oddsApiProvider: MatchProvider = new OddsApiProvider();
 
 /** Invalida o cache em memória (ex.: após correção de handicap). */
-export function invalidateOddsListCache(): void {
+export function invalidateOddsListCache(options?: { allowPostKickoffFetch?: boolean }): void {
   listCache = null;
+  if (options?.allowPostKickoffFetch) {
+    allowPostKickoffOddsFetch = true;
+  }
 }
