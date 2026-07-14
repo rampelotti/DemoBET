@@ -67,26 +67,33 @@ export function BetSlip() {
 
   const groups = groupSelectionsByMatch(selections);
 
-  const totalStake = groups.reduce((sum, group) => sum + (stakes[group.matchId] ?? DEFAULT_STAKE), 0);
+  const totalStake = groups.reduce((sum, group) => {
+    const stake = stakes[group.matchId];
+    return sum + (stake && stake > 0 ? stake : DEFAULT_STAKE);
+  }, 0);
   const totalPotentialReturn = groups.reduce((sum, group) => {
-    const stake = stakes[group.matchId] ?? DEFAULT_STAKE;
-    return sum + Math.floor(stake * group.combinedOdd);
+    const stake = stakes[group.matchId];
+    const effectiveStake = stake && stake > 0 ? stake : DEFAULT_STAKE;
+    return sum + Math.floor(effectiveStake * group.combinedOdd);
   }, 0);
 
   function handleConfirm() {
     setFeedback(null);
     startTransition(async () => {
       const result = await placeBet(
-        groups.map((group) => ({
-          stake: stakes[group.matchId] ?? DEFAULT_STAKE,
-          selections: group.selections.map((selection) => ({
-            oddId: selection.oddId,
-            matchId: selection.matchId,
-            marketLabel: selection.marketLabel,
-            selectionLabel: selection.selectionLabel,
-            oddValue: selection.oddValue,
-          })),
-        }))
+        groups.map((group) => {
+          const stake = stakes[group.matchId];
+          return {
+            stake: stake && stake > 0 ? stake : DEFAULT_STAKE,
+            selections: group.selections.map((selection) => ({
+              oddId: selection.oddId,
+              matchId: selection.matchId,
+              marketLabel: selection.marketLabel,
+              selectionLabel: selection.selectionLabel,
+              oddValue: selection.oddValue,
+            })),
+          };
+        })
       );
 
       setFeedback(result);
@@ -112,7 +119,10 @@ export function BetSlip() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3">
         {groups.map((group) => {
-          const stake = stakes[group.matchId] ?? DEFAULT_STAKE;
+          const stake =
+            stakes[group.matchId] && stakes[group.matchId]! > 0
+              ? stakes[group.matchId]!
+              : DEFAULT_STAKE;
           const potentialReturn = Math.floor(stake * group.combinedOdd);
           const isMultiple = group.selections.length > 1;
 
@@ -176,11 +186,36 @@ export function BetSlip() {
                   </label>
                   <Input
                     id={`stake-${group.matchId}`}
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={stake}
-                    onChange={(event) => setStake(group.matchId, Number(event.target.value))}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="off"
+                    enterKeyHint="done"
+                    placeholder={String(DEFAULT_STAKE)}
+                    value={
+                      stakes[group.matchId] === undefined
+                        ? String(DEFAULT_STAKE)
+                        : stakes[group.matchId] === 0
+                          ? ""
+                          : String(stakes[group.matchId])
+                    }
+                    onChange={(event) => {
+                      const digits = event.target.value.replace(/\D/g, "");
+                      if (digits === "") {
+                        setStake(group.matchId, 0);
+                        return;
+                      }
+                      const next = Number.parseInt(digits, 10);
+                      if (Number.isFinite(next)) {
+                        setStake(group.matchId, next);
+                      }
+                    }}
+                    onBlur={() => {
+                      // Se ficou vazio ao sair, volta para o stake padrão.
+                      if (!stakes[group.matchId]) {
+                        setStake(group.matchId, DEFAULT_STAKE);
+                      }
+                    }}
                     className="h-9"
                   />
                 </div>

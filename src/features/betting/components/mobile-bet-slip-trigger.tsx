@@ -18,10 +18,10 @@ export function MobileBetSlipTrigger() {
   }
 
   const matchIds = new Set(selections.map((selection) => selection.matchId));
-  const totalStake = Array.from(matchIds).reduce(
-    (sum, matchId) => sum + (stakes[matchId] ?? DEFAULT_STAKE),
-    0
-  );
+  const totalStake = Array.from(matchIds).reduce((sum, matchId) => {
+    const stake = stakes[matchId];
+    return sum + (stake && stake > 0 ? stake : DEFAULT_STAKE);
+  }, 0);
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background p-3 xl:hidden">
