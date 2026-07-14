@@ -3,11 +3,11 @@
 import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/prisma";
-import { generateUniqueUsername } from "@/lib/username";
+import { isUsernameTaken } from "@/lib/username";
 import { registerSchema } from "@/lib/validations/auth";
 
 export interface RegisterInput {
-  name: string;
+  username: string;
   email: string;
   password: string;
 }
@@ -28,37 +28,52 @@ export async function registerUser(input: RegisterInput): Promise<RegisterResult
     };
   }
 
-  const { name, email, password } = parsed.data;
+  const { username, email, password } = parsed.data;
 
-  const existingUser = await prisma.user.findUnique({ where: { email } });
-  if (existingUser) {
+  const existingEmail = await prisma.user.findUnique({ where: { email } });
+  if (existingEmail) {
     return { success: false, message: "Já existe uma conta com esse e-mail." };
   }
 
-  const passwordHash = await bcrypt.hash(password, 10);
-  const username = await generateUniqueUsername(name, email);
+  if (await isUsernameTaken(username)) {
+    return { success: false, message: "Esse username já está em uso. Escolha outro." };
+  }
 
-  await prisma.user.create({
-    data: {
-      name,
-      email,
-      username,
-      password: passwordHash,
-      wallet: {
-        create: {
-          balance: INITIAL_COINS,
-          transactions: {
-            create: {
-              type: "REGISTRATION_BONUS",
-              amount: INITIAL_COINS,
-              balanceAfter: INITIAL_COINS,
-              note: "Bônus de cadastro",
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  try {
+    await prisma.user.create({
+      data: {
+        // `name` permanece como display fallback; a identidade pública é o username.
+        name: username,
+        email,
+        username,
+        password: passwordHash,
+        wallet: {
+          create: {
+            balance: INITIAL_COINS,
+            transactions: {
+              create: {
+                type: "REGISTRATION_BONUS",
+                amount: INITIAL_COINS,
+                balanceAfter: INITIAL_COINS,
+                note: "Bônus de cadastro",
+              },
             },
           },
         },
       },
-    },
-  });
+    });
+  } catch (error) {
+    const code =
+      typeof error === "object" && error && "code" in error
+        ? String((error as { code?: string }).code)
+        : "";
+    if (code === "P2002") {
+      return { success: false, message: "E-mail ou username já está em uso." };
+    }
+    throw error;
+  }
 
   return { success: true };
 }

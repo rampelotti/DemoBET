@@ -23,21 +23,23 @@ interface DashboardTopbarProps {
   user: {
     name: string;
     email: string;
+    displayName?: string;
   };
   coinsBalance: number;
 }
 
 function getInitials(name: string) {
-  return name
-    .split(" ")
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+  const clean = name.replace(/^@/, "").trim();
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+  }
+  return clean.slice(0, 2).toUpperCase();
 }
 
 export function DashboardTopbar({ user, coinsBalance }: DashboardTopbarProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const displayName = user.displayName ?? user.name;
 
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-background/80 px-4 py-4 backdrop-blur-md sm:px-6 lg:px-8">
@@ -53,7 +55,7 @@ export function DashboardTopbar({ user, coinsBalance }: DashboardTopbarProps) {
         </Button>
         <div>
           <p className="text-sm text-muted-foreground">Bem-vindo de volta,</p>
-          <p className="text-base font-semibold text-foreground">{user.name}</p>
+          <p className="text-base font-semibold text-foreground">{displayName}</p>
         </div>
       </div>
 
@@ -82,13 +84,13 @@ export function DashboardTopbar({ user, coinsBalance }: DashboardTopbarProps) {
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Avatar>
-                <AvatarFallback>{getInitials(user.name)}</AvatarFallback>
+                <AvatarFallback>{getInitials(displayName)}</AvatarFallback>
               </Avatar>
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>
-              <p className="text-sm font-medium text-foreground">{user.name}</p>
+              <p className="text-sm font-medium text-foreground">{displayName}</p>
               <p className="text-xs text-muted-foreground">{user.email}</p>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />

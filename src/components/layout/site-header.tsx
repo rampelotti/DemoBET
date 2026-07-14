@@ -32,26 +32,28 @@ interface SiteHeaderProps {
   user?: {
     name: string;
     email: string;
+    displayName?: string;
   } | null;
   coinsBalance?: number | null;
 }
 
 function getInitials(name: string) {
-  return name
-    .split(" ")
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+  const clean = name.replace(/^@/, "").trim();
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+  }
+  return clean.slice(0, 2).toUpperCase();
 }
 
 export function SiteHeader({ user, coinsBalance }: SiteHeaderProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const searchParams = useSearchParams();
   const searchQuery = searchParams.get("q") ?? undefined;
+  const displayName = user?.displayName ?? user?.name ?? "";
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-border bg-background">
+    <header className="z-40 w-full shrink-0 border-b border-border bg-background">
       <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3 lg:px-6">
         <Button
           variant="ghost"
@@ -116,13 +118,13 @@ export function SiteHeader({ user, coinsBalance }: SiteHeaderProps) {
                 <DropdownMenuTrigger asChild>
                   <button className="flex items-center gap-2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     <Avatar>
-                      <AvatarFallback>{getInitials(user.name)}</AvatarFallback>
+                      <AvatarFallback>{getInitials(displayName.replace(/^@/, ""))}</AvatarFallback>
                     </Avatar>
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuLabel>
-                    <p className="text-sm font-medium text-foreground">{user.name}</p>
+                    <p className="text-sm font-medium text-foreground">{displayName}</p>
                     <p className="text-xs text-muted-foreground">{user.email}</p>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />

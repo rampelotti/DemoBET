@@ -51,7 +51,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         return {
           id: user.id,
-          name: user.name,
+          name: user.username ? `@${user.username}` : user.name,
           email: user.email,
           role: "USER",
         };

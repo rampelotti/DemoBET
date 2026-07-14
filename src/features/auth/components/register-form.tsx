@@ -23,11 +23,11 @@ export function RegisterForm() {
     setIsSubmitting(true);
 
     const formData = new FormData(event.currentTarget);
-    const name = String(formData.get("name") ?? "");
+    const username = String(formData.get("username") ?? "");
     const email = String(formData.get("email") ?? "");
     const password = String(formData.get("password") ?? "");
 
-    const result = await registerUser({ name, email, password });
+    const result = await registerUser({ username, email, password });
 
     if (!result.success) {
       setError(result.message ?? "Não foi possível criar sua conta.");
@@ -61,8 +61,28 @@ export function RegisterForm() {
       <CardContent>
         <form className="flex flex-col gap-5" onSubmit={handleSubmit}>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="name">Nome completo</Label>
-            <Input id="name" name="name" type="text" placeholder="Seu nome" required />
+            <Label htmlFor="username">Nome de usuário</Label>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
+                @
+              </span>
+              <Input
+                id="username"
+                name="username"
+                type="text"
+                autoComplete="username"
+                placeholder="usuario"
+                className="pl-7 lowercase"
+                minLength={3}
+                maxLength={20}
+                pattern="[A-Za-z][A-Za-z0-9_]{2,19}"
+                title="3–20 caracteres: comece com letra; use letras, números ou _"
+                required
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Sua tag no site. Única, sem espaços. Ex.: @usuario
+            </p>
           </div>
 
           <div className="flex flex-col gap-2">

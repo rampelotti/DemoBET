@@ -19,25 +19,25 @@ export default async function SportsbookLayout({
   const recentBets = currentUser ? (await getUserBets(currentUser.id)).slice(0, 4) : [];
 
   return (
-    <div className="relative flex min-h-screen flex-col bg-muted/20">
+    <div className="relative flex h-dvh flex-col overflow-hidden bg-muted/20">
       <ParticleBackground />
       <Suspense fallback={null}>
         <SiteHeader user={currentUser} coinsBalance={currentUser?.walletBalance} />
       </Suspense>
 
-      <div className="flex flex-1">
-        <aside className="hidden w-60 shrink-0 border-r border-border bg-background lg:block">
-          <div className="sticky top-0 h-screen">
-            <Suspense fallback={null}>
-              <SportsbookSidebar />
-            </Suspense>
-          </div>
+      <div className="flex min-h-0 flex-1">
+        <aside className="hidden w-60 shrink-0 overflow-y-auto border-r border-border bg-background lg:block">
+          <Suspense fallback={null}>
+            <SportsbookSidebar />
+          </Suspense>
         </aside>
 
-        <main className="min-w-0 flex-1 p-4 pb-24 sm:p-6 xl:pb-6">{children}</main>
+        <main className="min-w-0 flex-1 overflow-y-auto p-4 pb-24 sm:p-6 xl:pb-6">
+          {children}
+        </main>
 
-        <aside className="hidden w-80 shrink-0 border-l border-border bg-background xl:block">
-          <div className="sticky top-0 flex h-screen flex-col gap-4 overflow-y-auto p-4">
+        <aside className="hidden w-80 shrink-0 overflow-y-auto border-l border-border bg-background xl:block">
+          <div className="flex flex-col gap-4 p-4">
             <div>
               <h2 className="mb-4 text-sm font-semibold text-foreground">Cupom de apostas</h2>
               <BetSlip />

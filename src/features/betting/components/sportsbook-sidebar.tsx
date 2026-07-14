@@ -36,7 +36,7 @@ export function SportsbookSidebar({ onNavigate, className }: SportsbookSidebarPr
   }
 
   return (
-    <div className={cn("flex h-full flex-col gap-6 overflow-y-auto py-6", className)}>
+    <div className={cn("flex h-full flex-col gap-6 py-6", className)}>
       <div className="px-4">
         <p className="px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Navegar

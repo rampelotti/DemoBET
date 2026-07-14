@@ -1,7 +1,6 @@
 import {
   BarChart3,
   Hash,
-  Percent,
   Target,
   TrendingDown,
   TrendingUp,
