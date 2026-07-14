@@ -23,6 +23,18 @@ export function SiteFooter() {
             Plataforma de <span className="font-medium text-foreground">simulação</span>. Nenhuma
             aposta com dinheiro real é realizada. Use apenas Coins virtuais.
           </p>
+          <p className="text-[11px] text-muted-foreground/90">
+            Estatísticas de jogo (placar, escanteios, cartões e eventos) fornecidas pela{" "}
+            <a
+              href="https://optaplayerstats.statsperform.com/en_GB/soccer"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline-offset-2 hover:underline"
+            >
+              Opta
+            </a>{" "}
+            (Stats Perform). Odds de mercado via The Odds API / Pinnacle.
+          </p>
           <p>
             © {year} <span className="font-medium text-foreground">DemoScore</span>. Ideia,
             conceito e desenvolvimento por{" "}

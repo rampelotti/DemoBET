@@ -70,7 +70,8 @@ export function SettleMatchForm({ matchId, homeTeam, awayTeam }: SettleMatchForm
         <p className="text-sm font-medium text-foreground">Finalizar partida</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Placar final é obrigatório. Preencha HT, escanteios, cartões e artílheiros para liquidar
-          esses mercados; campos vazios → esses mercados são estornados (VOID).
+          esses mercados; campos vazios → esses mercados são estornados (VOID). Em produção, a
+          liquidação automática tenta puxar esses dados da Opta quando a partida termina.
         </p>
       </div>
 

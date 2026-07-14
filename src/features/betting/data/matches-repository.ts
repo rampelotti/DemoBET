@@ -2,6 +2,10 @@ import { settleMatchCore } from "@/features/betting/lib/settle-match-core";
 import type { MatchDTO } from "@/features/betting/types";
 import { getActiveOddsProvider } from "@/lib/providers/get-active-odds-provider";
 import { ODDS_API_MVP_CONFIG } from "@/lib/providers/odds-api-mvp-config";
+import {
+  fetchOptaFinishedTargetMatch,
+  teamsMatchOpta,
+} from "@/lib/providers/opta-stats-provider";
 import type { OddsProvider } from "@/lib/providers/odds-provider";
 import { prisma } from "@/lib/prisma";
 import { buildMatchSlug } from "@/lib/slug";
@@ -163,8 +167,6 @@ export async function importMatchesFromProvider(provider?: OddsProvider) {
 }
 
 async function settleFinishedMatches(provider: OddsProvider): Promise<void> {
-  if (!provider.fetchFinishedScores) return;
-
   const dueMatches = await prisma.match.findMany({
     where: {
       status: "SCHEDULED",
@@ -180,6 +182,20 @@ async function settleFinishedMatches(provider: OddsProvider): Promise<void> {
   );
   if (!anyLikelyOver) return;
 
+  // 1) Preferência: Opta (placar HT/FT + escanteios + cartões + artílheiros).
+  const optaMatch = await fetchOptaFinishedTargetMatch().catch(() => null);
+  if (optaMatch) {
+    for (const match of dueMatches) {
+      if (!teamsMatchOpta(match.homeTeam, match.awayTeam, optaMatch.homeTeam, optaMatch.awayTeam)) {
+        continue;
+      }
+      await settleMatchCore(match.id, optaMatch.context, "system:opta-auto");
+      return;
+    }
+  }
+
+  // 2) Fallback: placar final da The Odds API (sem stats extras).
+  if (!provider.fetchFinishedScores) return;
   const scores = await provider.fetchFinishedScores().catch(() => []);
   if (scores.length === 0) return;
 
