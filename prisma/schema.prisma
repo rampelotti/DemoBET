@@ -1,0 +1,328 @@
+// DemoScore - Prisma schema
+// Plataforma de simulação de apostas esportivas com Coins (sem dinheiro real).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  FINISHED
+  CANCELLED
+}
+
+enum BetStatus {
+  OPEN
+  WON
+  LOST
+  CANCELLED
+}
+
+enum SelectionResult {
+  PENDING
+  WON
+  LOST
+  VOID
+}
+
+enum TransactionType {
+  REGISTRATION_BONUS
+  BET_PLACED
+  BET_WON
+  BET_REFUND
+  ADMIN_CREDIT
+  ADMIN_DEBIT
+  ADMIN_RESET
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum GroupInviteStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum GroupMemberRole {
+  OWNER
+  MEMBER
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  username      String?   @unique
+  email         String    @unique
+  password      String
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts               Account[]
+  sessions               Session[]
+  wallet                 Wallet?
+  bets                   Bet[]
+  sentFriendRequests     Friendship[]  @relation("FriendRequester")
+  receivedFriendRequests Friendship[]  @relation("FriendAddressee")
+  ownedGroups            Group[]       @relation("GroupOwner")
+  groupMemberships       GroupMember[]
+  groupInvitesSent       GroupInvite[] @relation("GroupInviter")
+  groupInvitesReceived   GroupInvite[] @relation("GroupInvitee")
+
+  @@map("users")
+}
+
+// Modelos abaixo (Account/Session/VerificationToken) seguem o schema padrão
+// exigido pelo @auth/prisma-adapter (Auth.js). Como o login usa Credentials
+// Provider com sessão JWT, a tabela Session não é usada em runtime, mas o
+// adapter exige que ela exista para tipagem e para suportar outros
+// providers (ex.: OAuth) no futuro.
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  balance   Int      @default(10000)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@map("wallets")
+}
+
+model Transaction {
+  id           String          @id @default(cuid())
+  walletId     String
+  type         TransactionType
+  amount       Int
+  balanceAfter Int
+  betId        String?
+  note         String?
+  createdAt    DateTime        @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  bet    Bet?   @relation(fields: [betId], references: [id])
+
+  @@map("transactions")
+}
+
+// Partida esportiva futura. "sport" e "league" são strings livres (em vez de
+// enum) para não exigir migração de schema a cada novo esporte/liga, e para
+// facilitar o mapeamento de campos vindos de uma API externa no futuro.
+model Match {
+  id         String      @id @default(cuid())
+  externalId String?     @unique
+  slug       String?     @unique
+  sport      String
+  league     String
+  homeTeam   String
+  awayTeam   String
+  homeCrestUrl  String?
+  awayCrestUrl  String?
+  leagueLogoUrl String?
+  startTime  DateTime
+  status     MatchStatus @default(SCHEDULED)
+  homeScore  Int?
+  awayScore  Int?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  markets       Market[]
+  betSelections BetSelection[]
+
+  @@index([sport, startTime])
+  @@map("matches")
+}
+
+// Mercado de apostas de uma partida (ex.: "Resultado final", "Total de gols").
+model Market {
+  id      String @id @default(cuid())
+  matchId String
+  type    String
+  label   String
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  odds  Odd[]
+
+  @@map("markets")
+}
+
+// Uma opção/odd dentro de um mercado (ex.: seleção "HOME" com valor 1.85).
+model Odd {
+  id        String   @id @default(cuid())
+  marketId  String
+  selection String
+  label     String
+  value     Float
+  isActive  Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  market        Market         @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  betSelections BetSelection[]
+
+  @@map("odds")
+}
+
+// Uma aposta do usuário. Pode ter uma ou mais seleções: 1 seleção é aposta
+// simples, 2+ (sempre da mesma partida) é aposta múltipla/"Bet Builder"
+// com odd combinada — ver `place-bet.ts` e `bet-slip.tsx`.
+model Bet {
+  id              String    @id @default(cuid())
+  userId          String
+  status          BetStatus @default(OPEN)
+  stake           Int
+  potentialReturn Int
+  actualReturn    Int?
+  placedAt        DateTime  @default(now())
+  settledAt       DateTime?
+
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  selections   BetSelection[]
+  transactions Transaction[]
+
+  @@map("bets")
+}
+
+// Snapshot de uma seleção no momento em que a aposta foi feita (a odd pode
+// mudar depois, então guardamos o valor usado no cálculo do retorno).
+model BetSelection {
+  id             String          @id @default(cuid())
+  betId          String
+  oddId          String
+  matchId        String
+  marketLabel    String
+  selectionLabel String
+  oddValue       Float
+  result         SelectionResult @default(PENDING)
+
+  bet   Bet   @relation(fields: [betId], references: [id], onDelete: Cascade)
+  odd   Odd   @relation(fields: [oddId], references: [id])
+  match Match @relation(fields: [matchId], references: [id])
+
+  @@map("bet_selections")
+}
+
+// Auditoria de ações administrativas. O admin é uma credencial fixa de
+// desenvolvimento (não é um User comum), por isso guardamos apenas o e-mail.
+model AdminLog {
+  id         String   @id @default(cuid())
+  adminEmail String
+  action     String
+  targetType String?
+  targetId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@map("admin_logs")
+}
+
+model Friendship {
+  id          String           @id @default(cuid())
+  requesterId String
+  addresseeId String
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  requester User @relation("FriendRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee User @relation("FriendAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, addresseeId])
+  @@map("friendships")
+}
+
+model Group {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  ownerId   String
+  isPrivate Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  owner   User          @relation("GroupOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members GroupMember[]
+  invites GroupInvite[]
+
+  @@map("groups")
+}
+
+model GroupMember {
+  id       String          @id @default(cuid())
+  groupId  String
+  userId   String
+  role     GroupMemberRole @default(MEMBER)
+  joinedAt DateTime        @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@map("group_members")
+}
+
+model GroupInvite {
+  id        String            @id @default(cuid())
+  groupId   String
+  inviterId String
+  inviteeId String
+  status    GroupInviteStatus @default(PENDING)
+  createdAt DateTime          @default(now())
+
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  inviter User  @relation("GroupInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee User  @relation("GroupInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, inviteeId])
+  @@map("group_invites")
+}
