@@ -11,6 +11,8 @@ import type { OddsProvider } from "@/lib/providers/odds-provider";
 import { prisma } from "@/lib/prisma";
 import { buildMatchSlug } from "@/lib/slug";
 
+const ASSUMED_MATCH_DURATION_MS = 2.5 * 60 * 60 * 1000;
+
 /** Uma vez por processo após o fix de pareamento — reimporta odds limpas. */
 let didForceSpreadPairResync = false;
 
@@ -420,7 +422,7 @@ export async function getMatchBySlug(slug: string) {
 
   if (matchMeta?.status === "SCHEDULED" && !didForceSpreadPairResync) {
     const provider = getActiveOddsProvider();
-    if (matchMeta.externalId.startsWith(provider.externalIdPrefix)) {
+    if (matchMeta.externalId?.startsWith(provider.externalIdPrefix)) {
       didForceSpreadPairResync = true;
       invalidateOddsListCache();
       await importMatchesFromProvider(provider).catch((error) => {
