@@ -1,32 +1,58 @@
 import { revalidatePath } from "next/cache";
 
-import { resolveSelectionResult } from "@/features/admin/lib/resolve-selection-result";
+import {
+  resolveSelectionResult,
+  type MatchSettleContext,
+} from "@/features/admin/lib/resolve-selection-result";
 import { prisma } from "@/lib/prisma";
 
 export interface SettleMatchCoreResult {
   betsSettled: number;
 }
 
+export type SettleMatchStats = MatchSettleContext;
+
 /**
- * Núcleo da liquidação de uma partida: fecha o placar, resolve seleções
- * pendentes, atualiza apostas e credita Coins de quem ganhou. Usado tanto
- * pela ação administrativa (`settle-match.ts`, placar informado manualmente)
- * quanto pela liquidação automática de partidas importadas da The Odds API
- * (`settleFinishedOddsApiMatches`, placar vindo da API) — `actorLabel`
- * identifica quem/o que disparou a liquidação no log de auditoria.
+ * Núcleo da liquidação: resolve todos os mercados possíveis com o contexto
+ * informado (FT obrigatório; HT/escanteios/cartões/artílheiros opcionais).
  */
 export async function settleMatchCore(
   matchId: string,
-  homeScore: number,
-  awayScore: number,
+  context: SettleMatchStats,
   actorLabel: string,
   options?: { skipRevalidate?: boolean }
 ): Promise<SettleMatchCoreResult> {
+  const homeScore = Math.round(context.homeScore);
+  const awayScore = Math.round(context.awayScore);
+
+  const settleContext: MatchSettleContext = {
+    ...context,
+    homeScore,
+    awayScore,
+  };
+
   const affectedBetIds = await prisma.$transaction(
     async (tx) => {
       await tx.match.update({
         where: { id: matchId },
-        data: { status: "FINISHED", homeScore: Math.round(homeScore), awayScore: Math.round(awayScore) },
+        data: {
+          status: "FINISHED",
+          homeScore,
+          awayScore,
+          resultStats: {
+            homeScoreHt: context.homeScoreHt ?? null,
+            awayScoreHt: context.awayScoreHt ?? null,
+            homeCorners: context.homeCorners ?? null,
+            awayCorners: context.awayCorners ?? null,
+            homeCards: context.homeCards ?? null,
+            awayCards: context.awayCards ?? null,
+            goalScorers: context.goalScorers ?? null,
+            firstScorer: context.firstScorer ?? null,
+            lastScorer: context.lastScorer ?? null,
+            cardedPlayers: context.cardedPlayers ?? null,
+            redCardPlayers: context.redCardPlayers ?? null,
+          },
+        },
       });
 
       const pendingSelections = await tx.betSelection.findMany({
@@ -38,8 +64,7 @@ export async function settleMatchCore(
         const result = resolveSelectionResult(
           selection.odd.market.type,
           selection.odd.selection,
-          homeScore,
-          awayScore
+          settleContext
         );
         await tx.betSelection.update({ where: { id: selection.id }, data: { result } });
       }
@@ -66,6 +91,7 @@ export async function settleMatchCore(
           status = "WON";
           actualReturn = bet.potentialReturn;
         } else {
+          // Todas VOID (push / sem dados) → estorno
           status = "CANCELLED";
           actualReturn = bet.stake;
         }
@@ -102,7 +128,12 @@ export async function settleMatchCore(
           action: "SETTLE_MATCH",
           targetType: "Match",
           targetId: matchId,
-          metadata: { homeScore, awayScore, betsSettled: betIds.length },
+          metadata: {
+            homeScore,
+            awayScore,
+            betsSettled: betIds.length,
+            stats: JSON.parse(JSON.stringify(settleContext)) as object,
+          },
         },
       });
 

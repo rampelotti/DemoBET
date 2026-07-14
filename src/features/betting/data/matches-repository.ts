@@ -189,8 +189,10 @@ async function settleFinishedMatches(provider: OddsProvider): Promise<void> {
 
     await settleMatchCore(
       match.id,
-      scoreEvent.homeScore,
-      scoreEvent.awayScore,
+      {
+        homeScore: scoreEvent.homeScore,
+        awayScore: scoreEvent.awayScore,
+      },
       `system:${provider.id}-auto`
     );
   }

@@ -46,6 +46,34 @@ export default async function AdminMatchDetailPage({ params }: AdminMatchDetailP
           <p className="mt-1 text-2xl font-semibold text-foreground">
             {match.homeScore} - {match.awayScore}
           </p>
+          {match.resultStats && typeof match.resultStats === "object" ? (
+            <div className="mt-3 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+              {"homeScoreHt" in match.resultStats &&
+                match.resultStats.homeScoreHt != null &&
+                match.resultStats.awayScoreHt != null && (
+                  <p>
+                    HT: {String(match.resultStats.homeScoreHt)} -{" "}
+                    {String(match.resultStats.awayScoreHt)}
+                  </p>
+                )}
+              {"homeCorners" in match.resultStats &&
+                match.resultStats.homeCorners != null &&
+                match.resultStats.awayCorners != null && (
+                  <p>
+                    Escanteios: {String(match.resultStats.homeCorners)} -{" "}
+                    {String(match.resultStats.awayCorners)}
+                  </p>
+                )}
+              {"homeCards" in match.resultStats &&
+                match.resultStats.homeCards != null &&
+                match.resultStats.awayCards != null && (
+                  <p>
+                    Cartões: {String(match.resultStats.homeCards)} -{" "}
+                    {String(match.resultStats.awayCards)}
+                  </p>
+                )}
+            </div>
+          ) : null}
         </div>
       ) : (
         <SettleMatchForm matchId={match.id} homeTeam={match.homeTeam} awayTeam={match.awayTeam} />
