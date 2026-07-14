@@ -3,9 +3,9 @@
 import { useMemo, useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
+import { OddButton } from "@/features/betting/components/odd-button";
 import type { MatchWithMarkets } from "@/features/betting/types";
 import { trackAddToSlip } from "@/lib/analytics/gtm";
-import { cn } from "@/lib/utils";
 import { useBetSlipStore } from "@/store/bet-slip-store";
 
 type Market = MatchWithMarkets["markets"][number];
@@ -18,10 +18,11 @@ interface HandicapMarketCardProps {
 }
 
 interface HandicapLine {
-  line: number;
+  /** Handicap do mandante nesta linha (ex.: -1.5). Visitante = oposto. */
+  homeLine: number;
   market: Market;
-  homeOdd?: Odd;
-  awayOdd?: Odd;
+  homeOdd: Odd;
+  awayOdd: Odd;
 }
 
 function formatLine(line: number): string {
@@ -29,80 +30,65 @@ function formatLine(line: number): string {
   return String(line);
 }
 
-function parseLineFromMarket(market: Market): number | null {
-  const fromLabel =
-    /(?:Handicap(?: asiático)?(?: de escanteios| de cartões)?(?: - 1º tempo)?)\s*-\s*([+-]?[\d.]+)$/i.exec(
-      market.label
-    ) ?? / ([+-]?[\d.]+)$/.exec(market.label);
-  if (fromLabel) return Number(fromLabel[1]);
-
-  const fromType = /_([+-]?[\d.]+)$/.exec(market.type);
-  if (fromType) return Number(fromType[1]);
-  return null;
+function parseOddPoint(odd: Odd): { side: "HOME" | "AWAY"; point: number } | null {
+  const match = /^(HOME|AWAY)_([+-]?[\d.]+)$/.exec(odd.selection);
+  if (!match) return null;
+  const point = Number(match[2]);
+  if (!Number.isFinite(point)) return null;
+  return { side: match[1] as "HOME" | "AWAY", point };
 }
 
-function toHomeLine(parsedLine: number, market: Market): number {
-  const hasHome = market.odds.some((odd) => odd.selection.startsWith("HOME"));
-  const hasAway = market.odds.some((odd) => odd.selection.startsWith("AWAY"));
-  if (!hasHome && hasAway) return -parsedLine;
-  return parsedLine;
-}
-
-function pickSide(odds: Odd[], side: "HOME" | "AWAY"): Odd | undefined {
-  return odds.find((odd) => odd.selection.startsWith(side));
-}
-
-function dedupeByLine(markets: Market[]): HandicapLine[] {
-  const byLine = new Map<number, { market: Market; odds: Odd[] }>();
+/**
+ * Cada degrau do slider = uma linha completa:
+ *   França -1.5  |  Espanha +1.5
+ *   França +2.5  |  Espanha -2.5
+ * (ambos os times, handicap complementar do mandante).
+ */
+function buildCompleteLines(markets: Market[]): HandicapLine[] {
+  type Bucket = { market: Market; homeOdd?: Odd; awayOdd?: Odd };
+  const byHomeLine = new Map<number, Bucket>();
 
   for (const market of markets) {
-    const parsed = parseLineFromMarket(market);
-    if (parsed === null || Number.isNaN(parsed)) continue;
-    const line = toHomeLine(parsed, market);
-    const existing = byLine.get(line);
-    if (!existing) {
-      byLine.set(line, { market, odds: [...market.odds] });
-      continue;
-    }
-    const merged = [...existing.odds];
     for (const odd of market.odds) {
-      const side = odd.selection.startsWith("HOME")
-        ? "HOME"
-        : odd.selection.startsWith("AWAY")
-          ? "AWAY"
-          : null;
-      if (!side) {
-        merged.push(odd);
-        continue;
+      const parsed = parseOddPoint(odd);
+      if (!parsed) continue;
+
+      // Canonical: handicap do mandante. Fora com +1.5 ⇒ casa com -1.5.
+      const homeLine = parsed.side === "HOME" ? parsed.point : -parsed.point;
+      const bucket = byHomeLine.get(homeLine) ?? { market };
+
+      if (parsed.side === "HOME") {
+        if (!bucket.homeOdd) bucket.homeOdd = odd;
+      } else if (!bucket.awayOdd) {
+        bucket.awayOdd = odd;
       }
-      if (!merged.some((item) => item.selection.startsWith(side))) {
-        merged.push(odd);
+
+      // Prefere o market que já trouxe as duas pontas.
+      if (market.odds.length >= (bucket.market.odds.length ?? 0)) {
+        bucket.market = market;
       }
+
+      byHomeLine.set(homeLine, bucket);
     }
-    byLine.set(line, {
-      market: market.odds.length > existing.market.odds.length ? market : existing.market,
-      odds: merged,
-    });
   }
 
-  return [...byLine.entries()]
-    .map(([line, entry]) => ({
-      line,
-      market: entry.market,
-      homeOdd: pickSide(entry.odds, "HOME"),
-      awayOdd: pickSide(entry.odds, "AWAY"),
+  return [...byHomeLine.entries()]
+    .filter(([, bucket]) => bucket.homeOdd && bucket.awayOdd)
+    .map(([homeLine, bucket]) => ({
+      homeLine,
+      market: bucket.market,
+      homeOdd: bucket.homeOdd!,
+      awayOdd: bucket.awayOdd!,
     }))
-    .filter((entry) => entry.homeOdd || entry.awayOdd)
-    .sort((a, b) => a.line - b.line);
+    .sort((a, b) => a.homeLine - b.homeLine);
 }
 
-/** Linha mais próxima de zero (favorito leve, como −0.25 no anexo). */
 function defaultIndex(lines: HandicapLine[]): number {
   if (lines.length === 0) return 0;
   let best = 0;
-  let bestAbs = Math.abs(lines[0].line);
+  let bestAbs = Math.abs(lines[0].homeLine);
   for (let i = 1; i < lines.length; i++) {
-    const abs = Math.abs(lines[i].line);
+    const abs = Math.abs(lines[i].homeLine);
     if (abs < bestAbs) {
       best = i;
       bestAbs = abs;
@@ -111,12 +97,8 @@ function defaultIndex(lines: HandicapLine[]): number {
   return best;
 }
 
-/**
- * Handicap estilo casa de aposta: dois botões (casa/fora) + slider de linha.
- * Sem setas laterais — no mobile o espaço vai todo para o texto legível.
- */
 export function HandicapMarketCard({ match, groupLabel, markets }: HandicapMarketCardProps) {
-  const lines = useMemo(() => dedupeByLine(markets), [markets]);
+  const lines = useMemo(() => buildCompleteLines(markets), [markets]);
   const [index, setIndex] = useState(() => defaultIndex(lines));
 
   const selections = useBetSlipStore((state) => state.selections);
@@ -129,30 +111,28 @@ export function HandicapMarketCard({ match, groupLabel, markets }: HandicapMarke
   const current = lines[safeIndex];
   const progress = lines.length <= 1 ? 0 : (safeIndex / (lines.length - 1)) * 100;
 
-  const homeLabel = `${match.homeTeam} ${formatLine(current.line)}`;
-  const awayLabel = `${match.awayTeam} ${formatLine(-current.line)}`;
+  const homeLabel = `${match.homeTeam} ${formatLine(current.homeLine)}`;
+  const awayLabel = `${match.awayTeam} ${formatLine(-current.homeLine)}`;
 
   const buttons = [
-    current.homeOdd
-      ? { odd: current.homeOdd, displayLabel: homeLabel }
-      : null,
-    current.awayOdd
-      ? { odd: current.awayOdd, displayLabel: awayLabel }
-      : null,
-  ].filter(Boolean) as { odd: Odd; displayLabel: string }[];
+    { odd: current.homeOdd, displayLabel: homeLabel },
+    { odd: current.awayOdd, displayLabel: awayLabel },
+  ];
 
   return (
     <Card className="border-border/80 sm:col-span-2">
       <CardContent className="flex flex-col gap-3 p-4">
         <p className="text-xs text-muted-foreground">{groupLabel}</p>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="flex gap-2">
           {buttons.map(({ odd, displayLabel }) => {
             const isSelected = selections.some((selection) => selection.oddId === odd.id);
             return (
-              <button
+              <OddButton
                 key={odd.id}
-                type="button"
+                label={displayLabel}
+                value={odd.value}
+                isSelected={isSelected}
                 onClick={() => {
                   const alreadySelected = isSelected;
                   toggleSelection({
@@ -172,28 +152,7 @@ export function HandicapMarketCard({ match, groupLabel, markets }: HandicapMarke
                     });
                   }
                 }}
-                className={cn(
-                  "flex min-h-[3.5rem] items-center justify-between gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2.5 text-left transition-colors hover:border-primary/40 hover:bg-accent",
-                  isSelected && "border-primary bg-primary text-primary-foreground hover:bg-primary"
-                )}
-              >
-                <span
-                  className={cn(
-                    "min-w-0 text-[13px] font-medium leading-snug text-foreground",
-                    isSelected && "text-primary-foreground"
-                  )}
-                >
-                  {displayLabel}
-                </span>
-                <span
-                  className={cn(
-                    "shrink-0 text-base font-semibold tabular-nums text-primary",
-                    isSelected && "text-primary-foreground"
-                  )}
-                >
-                  {odd.value.toFixed(2)}
-                </span>
-              </button>
+              />
             );
           })}
         </div>
@@ -204,7 +163,7 @@ export function HandicapMarketCard({ match, groupLabel, markets }: HandicapMarke
               className="pointer-events-none absolute top-0 -translate-x-1/2 text-sm font-semibold tabular-nums text-foreground"
               style={{ left: `clamp(1.25rem, ${progress}%, calc(100% - 1.25rem))` }}
             >
-              {formatLine(current.line)}
+              {formatLine(current.homeLine)}
             </span>
             <input
               type="range"
@@ -213,7 +172,7 @@ export function HandicapMarketCard({ match, groupLabel, markets }: HandicapMarke
               step={1}
               value={safeIndex}
               aria-label={`Linha de ${groupLabel}`}
-              aria-valuetext={formatLine(current.line)}
+              aria-valuetext={formatLine(current.homeLine)}
               onChange={(event) => setIndex(Number(event.target.value))}
               className="handicap-slider w-full"
               style={{
