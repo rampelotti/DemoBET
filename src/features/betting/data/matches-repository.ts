@@ -30,47 +30,84 @@ async function generateUniqueMatchSlug(homeTeam: string, awayTeam: string): Prom
 }
 
 /**
- * Remove odds de handicap que não formam par complementar (casa +X com
- * visitante −X). Corrige snapshots antigos onde o mapper agrupava pelo
- * `point` absoluto (ex.: França +1 + Espanha +1 → UI mostrava Espanha −1
- * com a odd errada).
+ * Família estável do type SPREADS* — evita misturar gols, escanteios e HT.
+ */
+function spreadFamilyKey(marketType: string): string {
+  if (marketType.includes("CORNERS")) return "CORNERS";
+  if (marketType.includes("CARDS")) return "CARDS";
+  if (marketType.includes("H1")) return "H1";
+  return "MAIN";
+}
+
+/**
+ * Reativa pares complementares mesmo quando casa/fora ficaram em markets
+ * distintos (snapshot antigo agrupava por |point|), e desativa odds sem par.
+ * Ex.: ALTERNATE_SPREADS_-1 (HOME_-1) + ALTERNATE_SPREADS_1 (AWAY_1).
  */
 async function deactivateNonComplementarySpreadOdds(matchId: string): Promise<number> {
   const markets = await prisma.market.findMany({
     where: { matchId, type: { contains: "SPREADS" } },
-    include: { odds: { where: { isActive: true } } },
+    include: { odds: true },
   });
 
-  let changed = 0;
+  type OddRow = {
+    id: string;
+    side: "HOME" | "AWAY";
+    point: number;
+    isActive: boolean;
+  };
+
+  const byFamily = new Map<string, OddRow[]>();
 
   for (const market of markets) {
-    const homes: { point: number; id: string }[] = [];
-    const aways: { point: number; id: string }[] = [];
-
+    const family = spreadFamilyKey(market.type);
+    const list = byFamily.get(family) ?? [];
     for (const odd of market.odds) {
       const parsed = /^(HOME|AWAY)_([+-]?[\d.]+)$/.exec(odd.selection);
       if (!parsed) continue;
       const point = Number(parsed[2]);
       if (!Number.isFinite(point)) continue;
-      if (parsed[1] === "HOME") homes.push({ point, id: odd.id });
-      else aways.push({ point, id: odd.id });
+      list.push({
+        id: odd.id,
+        side: parsed[1] as "HOME" | "AWAY",
+        point,
+        isActive: odd.isActive,
+      });
     }
+    byFamily.set(family, list);
+  }
 
-    const keep = new Set<string>();
+  let changed = 0;
+  const keep = new Set<string>();
+
+  for (const odds of byFamily.values()) {
+    const homes = odds.filter((odd) => odd.side === "HOME");
+    const aways = odds.filter((odd) => odd.side === "AWAY");
+
     for (const home of homes) {
       const away = aways.find((entry) => Math.abs(entry.point + home.point) < 1e-9);
       if (!away) continue;
       keep.add(home.id);
       keep.add(away.id);
     }
+  }
 
+  for (const market of markets) {
     for (const odd of market.odds) {
-      if (keep.has(odd.id)) continue;
-      await prisma.odd.update({
-        where: { id: odd.id },
-        data: { isActive: false },
-      });
-      changed += 1;
+      const shouldKeep = keep.has(odd.id);
+      if (shouldKeep && !odd.isActive) {
+        await prisma.odd.update({
+          where: { id: odd.id },
+          data: { isActive: true },
+        });
+        changed += 1;
+      } else if (!shouldKeep && odd.isActive) {
+        await prisma.odd.update({
+          where: { id: odd.id },
+          data: { isActive: false },
+        });
+        changed += 1;
+      }
     }
   }
 
@@ -179,27 +216,37 @@ async function syncNewMarketsIntoExistingMatch(
   return changed;
 }
 
-/** True se ainda há odd ativa de handicap sem o complementar na mesma market. */
+/** True se ainda há odd (ativa) de handicap sem o complementar na mesma família. */
 async function hasBrokenSpreadPairs(prefix: string): Promise<boolean> {
   const markets = await prisma.market.findMany({
     where: {
       type: { contains: "SPREADS" },
       match: { status: "SCHEDULED", externalId: { startsWith: prefix } },
     },
-    include: { odds: { where: { isActive: true }, select: { selection: true } } },
+    select: {
+      matchId: true,
+      type: true,
+      odds: { where: { isActive: true }, select: { selection: true } },
+    },
   });
 
+  const byScope = new Map<string, { homes: number[]; aways: number[] }>();
+
   for (const market of markets) {
-    const homes: number[] = [];
-    const aways: number[] = [];
+    const scope = `${market.matchId}:${spreadFamilyKey(market.type)}`;
+    const bucket = byScope.get(scope) ?? { homes: [], aways: [] };
     for (const odd of market.odds) {
       const parsed = /^(HOME|AWAY)_([+-]?[\d.]+)$/.exec(odd.selection);
       if (!parsed) continue;
       const point = Number(parsed[2]);
       if (!Number.isFinite(point)) continue;
-      if (parsed[1] === "HOME") homes.push(point);
-      else aways.push(point);
+      if (parsed[1] === "HOME") bucket.homes.push(point);
+      else bucket.aways.push(point);
     }
+    byScope.set(scope, bucket);
+  }
+
+  for (const { homes, aways } of byScope.values()) {
     for (const homePoint of homes) {
       if (!aways.some((awayPoint) => Math.abs(awayPoint + homePoint) < 1e-9)) {
         return true;

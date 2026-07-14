@@ -66,6 +66,16 @@ function groupLabelForSpreadSuffix(suffix: string | undefined): string {
 }
 
 function parseGroupableMarket(market: Market): { groupLabel: string; line: number } | null {
+  // Prefer type for spreads — labels antigas ("Handicap 0") misturam
+  // gols/escanteios/cartões no mesmo bloco.
+  const spreadType = SPREAD_TYPE_PATTERN.exec(market.type);
+  if (spreadType) {
+    return {
+      groupLabel: groupLabelForSpreadSuffix(spreadType[1]),
+      line: Number(spreadType[2]),
+    };
+  }
+
   const lineMatch = LINE_LABEL_PATTERN.exec(market.label);
   if (lineMatch) {
     return { groupLabel: lineMatch[1], line: Number(lineMatch[2]) };
@@ -79,14 +89,6 @@ function parseGroupableMarket(market: Market): { groupLabel: string; line: numbe
   const legacyHandicap = LEGACY_HANDICAP_LABEL_PATTERN.exec(market.label);
   if (legacyHandicap) {
     return { groupLabel: legacyHandicap[1], line: Number(legacyHandicap[2]) };
-  }
-
-  const spreadType = SPREAD_TYPE_PATTERN.exec(market.type);
-  if (spreadType) {
-    return {
-      groupLabel: groupLabelForSpreadSuffix(spreadType[1]),
-      line: Number(spreadType[2]),
-    };
   }
 
   return null;
