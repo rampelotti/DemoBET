@@ -26,13 +26,13 @@ export function SiteFooter() {
           <p>
             © {year} <span className="font-medium text-foreground">DemoScore</span>. Ideia,
             conceito e desenvolvimento por{" "}
-            <span className="font-medium text-foreground">Gabriel Rampelotti</span>. Todos os
+            <span className="font-medium text-foreground">Seltron Company</span>. Todos os
             direitos reservados.
           </p>
           <p className="text-[11px] text-muted-foreground/90">
             Conteúdo, marca, layout e mecânicas deste produto são de natureza autoral. É proibida
             a cópia, reprodução, engenharia reversa ou exploração comercial da ideia e do software
-            sem autorização prévia por escrito do autor.
+            sem autorização prévia por escrito da Seltron Company.
           </p>
         </div>
       </div>

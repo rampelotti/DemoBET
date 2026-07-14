@@ -10,8 +10,12 @@ import {
 } from "@/lib/analytics/gtm";
 
 /**
- * Dispara page views e eventos de rota no App Router (client navigations).
- * GTM base (script) vem de `@next/third-parties` no root layout.
+ * Dispara dataLayer.push em pageviews e rotas críticas do App Router.
+ *
+ * Exemplos empilhados no dataLayer:
+ * - { event: 'site_visit' }
+ * - { event: 'mvp_page_view', page_path: '/social' }
+ * - { event: 'enter_fantasy', fantasy_section: 'hub' }
  */
 export function AnalyticsTracker() {
   const pathname = usePathname();

@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/sheet";
 import { SportsbookSidebar } from "@/features/betting/components/sportsbook-sidebar";
 import { SPORT_NAV_ITEMS } from "@/features/betting/data/sports-nav";
+import { trackNavClick } from "@/lib/analytics/gtm";
 
 interface SiteHeaderProps {
   user?: {
@@ -87,21 +88,32 @@ export function SiteHeader({ user, coinsBalance }: SiteHeaderProps) {
           {user ? (
             <>
               <Button asChild variant="ghost" size="sm" className="gap-1.5">
-                <Link href="/social">
+                <Link
+                  href="/social"
+                  onClick={() => trackNavClick("header_fantasy", "Fantasy", "/social")}
+                >
                   <Users className="h-4 w-4" />
                   <span className="hidden sm:inline">Fantasy</span>
                 </Link>
               </Button>
 
               <Button asChild size="sm" className="gap-1.5">
-                <Link href="/dashboard/desempenho">
+                <Link
+                  href="/dashboard/desempenho"
+                  onClick={() =>
+                    trackNavClick("header_performance", "Meu Desempenho", "/dashboard/desempenho")
+                  }
+                >
                   <BarChart3 className="h-4 w-4" />
                   <span className="hidden sm:inline">Meu Desempenho</span>
                 </Link>
               </Button>
 
               <Button asChild variant="ghost" size="sm" className="gap-1.5">
-                <Link href="/meus-palpites">
+                <Link
+                  href="/meus-palpites"
+                  onClick={() => trackNavClick("header_my_bets", "Meus palpites", "/meus-palpites")}
+                >
                   <Ticket className="h-4 w-4" />
                   <span className="hidden sm:inline">Meus palpites</span>
                 </Link>
