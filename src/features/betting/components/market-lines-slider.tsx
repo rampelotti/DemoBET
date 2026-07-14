@@ -11,21 +11,22 @@ import { useBetSlipStore } from "@/store/bet-slip-store";
 type Market = MatchWithMarkets["markets"][number];
 type Odd = Market["odds"][number];
 
-interface HandicapMarketCardProps {
+interface MarketLinesSliderProps {
   match: Pick<MatchWithMarkets, "id" | "homeTeam" | "awayTeam">;
   groupLabel: string;
   markets: Market[];
+  /** Handicap (casa/fora) ou over/under (mais/menos). */
+  mode: "handicap" | "overUnder";
 }
 
-interface HandicapLine {
-  /** Handicap do mandante nesta linha (ex.: -1.5). Visitante = oposto. */
-  homeLine: number;
+interface SliderLine {
+  line: number;
   market: Market;
-  homeOdd: Odd;
-  awayOdd: Odd;
+  left: { odd: Odd; label: string };
+  right: { odd: Odd; label: string };
 }
 
-function formatLine(line: number): string {
+function formatHandicap(line: number): string {
   if (line > 0) return `+${line}`;
   return String(line);
 }
@@ -38,57 +39,80 @@ function parseOddPoint(odd: Odd): { side: "HOME" | "AWAY"; point: number } | nul
   return { side: match[1] as "HOME" | "AWAY", point };
 }
 
-/**
- * Cada degrau do slider = uma linha completa:
- *   França -1.5  |  Espanha +1.5
- *   França +2.5  |  Espanha -2.5
- * (ambos os times, handicap complementar do mandante).
- */
-function buildCompleteLines(markets: Market[]): HandicapLine[] {
-  type Bucket = { market: Market; homeOdd?: Odd; awayOdd?: Odd };
+function buildHandicapLines(
+  markets: Market[],
+  homeTeam: string,
+  awayTeam: string
+): SliderLine[] {
+  type Bucket = { market: Market; home?: Odd; away?: Odd };
   const byHomeLine = new Map<number, Bucket>();
 
   for (const market of markets) {
     for (const odd of market.odds) {
       const parsed = parseOddPoint(odd);
       if (!parsed) continue;
-
-      // Canonical: handicap do mandante. Fora com +1.5 ⇒ casa com -1.5.
       const homeLine = parsed.side === "HOME" ? parsed.point : -parsed.point;
       const bucket = byHomeLine.get(homeLine) ?? { market };
 
-      if (parsed.side === "HOME") {
-        if (!bucket.homeOdd) bucket.homeOdd = odd;
-      } else if (!bucket.awayOdd) {
-        bucket.awayOdd = odd;
+      // Só aceita odd cujo ponto bate com a linha canônica.
+      if (parsed.side === "HOME" && Math.abs(parsed.point - homeLine) < 1e-9) {
+        bucket.home = odd;
       }
-
-      // Prefere o market que já trouxe as duas pontas.
-      if (market.odds.length >= (bucket.market.odds.length ?? 0)) {
-        bucket.market = market;
+      if (parsed.side === "AWAY" && Math.abs(parsed.point + homeLine) < 1e-9) {
+        bucket.away = odd;
       }
-
+      if (market.odds.length >= bucket.market.odds.length) bucket.market = market;
       byHomeLine.set(homeLine, bucket);
     }
   }
 
   return [...byHomeLine.entries()]
-    .filter(([, bucket]) => bucket.homeOdd && bucket.awayOdd)
+    .filter(([, bucket]) => bucket.home && bucket.away)
     .map(([homeLine, bucket]) => ({
-      homeLine,
+      line: homeLine,
       market: bucket.market,
-      homeOdd: bucket.homeOdd!,
-      awayOdd: bucket.awayOdd!,
+      left: {
+        odd: bucket.home!,
+        label: `${homeTeam} ${formatHandicap(homeLine)}`,
+      },
+      right: {
+        odd: bucket.away!,
+        label: `${awayTeam} ${formatHandicap(-homeLine)}`,
+      },
     }))
-    .sort((a, b) => a.homeLine - b.homeLine);
+    .sort((a, b) => a.line - b.line);
 }
 
-function defaultIndex(lines: HandicapLine[]): number {
+function buildOverUnderLines(markets: Market[]): SliderLine[] {
+  const lines: SliderLine[] = [];
+
+  for (const market of markets) {
+    const over = market.odds.find((odd) => odd.selection === "OVER" || odd.selection.startsWith("OVER_"));
+    const under = market.odds.find((odd) => odd.selection === "UNDER" || odd.selection.startsWith("UNDER_"));
+    if (!over || !under) continue;
+
+    const fromLabel = /Mais\/Menos de ([\d.]+)$/.exec(market.label);
+    const fromType = /_([\d.]+)$/.exec(market.type);
+    const line = Number(fromLabel?.[1] ?? fromType?.[1]);
+    if (!Number.isFinite(line)) continue;
+
+    lines.push({
+      line,
+      market,
+      left: { odd: over, label: `Mais de ${line}` },
+      right: { odd: under, label: `Menos de ${line}` },
+    });
+  }
+
+  return lines.sort((a, b) => a.line - b.line);
+}
+
+function defaultIndex(lines: SliderLine[]): number {
   if (lines.length === 0) return 0;
   let best = 0;
-  let bestAbs = Math.abs(lines[0].homeLine);
+  let bestAbs = Math.abs(lines[0].line);
   for (let i = 1; i < lines.length; i++) {
-    const abs = Math.abs(lines[i].homeLine);
+    const abs = Math.abs(lines[i].line);
     if (abs < bestAbs) {
       best = i;
       bestAbs = abs;
@@ -97,8 +121,18 @@ function defaultIndex(lines: HandicapLine[]): number {
   return best;
 }
 
-export function HandicapMarketCard({ match, groupLabel, markets }: HandicapMarketCardProps) {
-  const lines = useMemo(() => buildCompleteLines(markets), [markets]);
+/**
+ * Um bloco com slider para mercados de muitas linhas (handicap, escanteios,
+ * cartões, totais…). Sempre mostra as duas pontas da linha atual.
+ */
+export function MarketLinesSlider({ match, groupLabel, markets, mode }: MarketLinesSliderProps) {
+  const lines = useMemo(
+    () =>
+      mode === "handicap"
+        ? buildHandicapLines(markets, match.homeTeam, match.awayTeam)
+        : buildOverUnderLines(markets),
+    [markets, match.homeTeam, match.awayTeam, mode]
+  );
   const [index, setIndex] = useState(() => defaultIndex(lines));
 
   const selections = useBetSlipStore((state) => state.selections);
@@ -110,14 +144,10 @@ export function HandicapMarketCard({ match, groupLabel, markets }: HandicapMarke
   const safeIndex = Math.min(Math.max(index, 0), lines.length - 1);
   const current = lines[safeIndex];
   const progress = lines.length <= 1 ? 0 : (safeIndex / (lines.length - 1)) * 100;
+  const lineLabel =
+    mode === "handicap" ? formatHandicap(current.line) : String(current.line);
 
-  const homeLabel = `${match.homeTeam} ${formatLine(current.homeLine)}`;
-  const awayLabel = `${match.awayTeam} ${formatLine(-current.homeLine)}`;
-
-  const buttons = [
-    { odd: current.homeOdd, displayLabel: homeLabel },
-    { odd: current.awayOdd, displayLabel: awayLabel },
-  ];
+  const buttons = [current.left, current.right];
 
   return (
     <Card className="border-border/80 sm:col-span-2">
@@ -125,12 +155,12 @@ export function HandicapMarketCard({ match, groupLabel, markets }: HandicapMarke
         <p className="text-xs text-muted-foreground">{groupLabel}</p>
 
         <div className="flex gap-2">
-          {buttons.map(({ odd, displayLabel }) => {
+          {buttons.map(({ odd, label }) => {
             const isSelected = selections.some((selection) => selection.oddId === odd.id);
             return (
               <OddButton
                 key={odd.id}
-                label={displayLabel}
+                label={label}
                 value={odd.value}
                 isSelected={isSelected}
                 onClick={() => {
@@ -141,7 +171,7 @@ export function HandicapMarketCard({ match, groupLabel, markets }: HandicapMarke
                     marketId: current.market.id,
                     matchLabel,
                     marketLabel: current.market.label,
-                    selectionLabel: displayLabel,
+                    selectionLabel: label,
                     oddValue: odd.value,
                   });
                   if (!alreadySelected) {
@@ -163,7 +193,7 @@ export function HandicapMarketCard({ match, groupLabel, markets }: HandicapMarke
               className="pointer-events-none absolute top-0 -translate-x-1/2 text-sm font-semibold tabular-nums text-foreground"
               style={{ left: `clamp(1.25rem, ${progress}%, calc(100% - 1.25rem))` }}
             >
-              {formatLine(current.homeLine)}
+              {lineLabel}
             </span>
             <input
               type="range"
@@ -172,7 +202,7 @@ export function HandicapMarketCard({ match, groupLabel, markets }: HandicapMarke
               step={1}
               value={safeIndex}
               aria-label={`Linha de ${groupLabel}`}
-              aria-valuetext={formatLine(current.homeLine)}
+              aria-valuetext={lineLabel}
               onChange={(event) => setIndex(Number(event.target.value))}
               className="handicap-slider w-full"
               style={{

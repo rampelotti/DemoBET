@@ -5,7 +5,7 @@ import { ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { COLLAPSE_THRESHOLD, GroupedMarketCard } from "@/features/betting/components/grouped-market-card";
-import { HandicapMarketCard } from "@/features/betting/components/handicap-market-card";
+import { MarketLinesSlider } from "@/features/betting/components/market-lines-slider";
 import { MarketOddsRow } from "@/features/betting/components/market-odds-row";
 import {
   CATEGORY_LABELS,
@@ -25,7 +25,13 @@ type Market = MatchWithMarkets["markets"][number];
 type RenderItem =
   | { kind: "single"; key: string; market: Market }
   | { kind: "group"; key: string; groupLabel: string; markets: Market[] }
-  | { kind: "handicap"; key: string; groupLabel: string; markets: Market[] };
+  | {
+      kind: "slider";
+      key: string;
+      groupLabel: string;
+      markets: Market[];
+      mode: "handicap" | "overUnder";
+    };
 
 function isHandicapGroupLabel(groupLabel: string): boolean {
   return groupLabel.startsWith("Handicap");
@@ -34,7 +40,6 @@ function isHandicapGroupLabel(groupLabel: string): boolean {
 /**
  * Mercados de linha (over/under): "<algo> - Mais/Menos de <linha>".
  * Handicaps: "<família> - <linha>" (ex.: "Handicap - -0.5").
- * Fallback por `type` cobre odds já gravadas com rótulo antigo.
  */
 const LINE_LABEL_PATTERN = /^(.*) - Mais\/Menos de ([\d.]+)$/;
 const HANDICAP_LABEL_PATTERN =
@@ -107,14 +112,18 @@ function buildRenderItems(markets: Market[]): RenderItem[] {
   const groupItems: RenderItem[] = groupOrder.map((groupLabel) => {
     const entries = [...(groupsByLabel.get(groupLabel) ?? [])].sort((a, b) => a.line - b.line);
     const itemMarkets = entries.map((entry) => entry.market);
-    if (isHandicapGroupLabel(groupLabel)) {
+
+    // Handicap e qualquer bloco com 2+ linhas → slider (cantos, cartões, totais…).
+    if (isHandicapGroupLabel(groupLabel) || itemMarkets.length >= 2) {
       return {
-        kind: "handicap" as const,
-        key: `handicap:${groupLabel}`,
+        kind: "slider" as const,
+        key: `slider:${groupLabel}`,
         groupLabel,
         markets: itemMarkets,
+        mode: isHandicapGroupLabel(groupLabel) ? ("handicap" as const) : ("overUnder" as const),
       };
     }
+
     return {
       kind: "group" as const,
       key: `group:${groupLabel}`,
@@ -135,9 +144,6 @@ export function MatchMarketsTabs({ match }: MatchMarketsTabsProps) {
 
   const availableCategories = CATEGORY_ORDER.filter((category) => groups.has(category));
   const [active, setActive] = useState<MarketCategory>(availableCategories[0] ?? "principais");
-  // Estado de expandido/recolhido por grupo (chave = groupLabel), controlado
-  // tanto pelo botão "Expandir tudo" quanto pelo botão individual de cada
-  // bloco — igual ao padrão usado pelas casas de apostas.
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   if (availableCategories.length === 0) {
@@ -211,13 +217,14 @@ export function MatchMarketsTabs({ match }: MatchMarketsTabsProps) {
 
       <div className="grid gap-3 sm:grid-cols-2">
         {renderItems.map((item) => {
-          if (item.kind === "handicap") {
+          if (item.kind === "slider") {
             return (
-              <HandicapMarketCard
+              <MarketLinesSlider
                 key={item.key}
                 match={match}
                 groupLabel={item.groupLabel}
                 markets={item.markets}
+                mode={item.mode}
               />
             );
           }

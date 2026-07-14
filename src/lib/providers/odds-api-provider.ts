@@ -40,6 +40,8 @@ interface OddsListCache {
 let listCache: OddsListCache | null = null;
 /** Evita fan-out de requisições paralelas no mesmo cold start. */
 let listInFlight: Promise<MatchDTO[]> | null = null;
+/** Bust do Data Cache do Next após correção do pareamento de handicaps. */
+const ODDS_FETCH_CACHE_BUST = "spreadPairV2";
 
 interface OddsApiOutcome {
   name: string;
@@ -438,9 +440,10 @@ function spreadTypePrefix(marketKey: string): string {
 }
 
 /**
- * Handicap / spreads — um mercado por linha da casa (home point).
- * A Odds API manda home=-1.5 e away=+1.5 como points separados; sem parear
- * cada lado vira um card incompleto. Agrupamos pelo handicap do mandante.
+ * Handicap / spreads — um mercado por linha do mandante, só se existir o
+ * par complementar (casa +X com visitante −X). A Odds API (alternate_spreads)
+ * devolve todos os pontos de cada time misturados; agrupar só por `point`
+ * inventa cruzamentos (ex.: França +1 com preço errado).
  */
 function mapSpreadMarkets(
   market: OddsApiMarket,
@@ -448,43 +451,46 @@ function mapSpreadMarkets(
   awayTeam: string,
   marketKey: string
 ): MarketDTO[] {
-  const byHomeLine = new Map<number, OddsApiOutcome[]>();
-  for (const outcome of market.outcomes) {
-    if (outcome.point === undefined) continue;
-    const homeLine =
-      outcome.name === awayTeam ? -outcome.point : outcome.point;
-    const list = byHomeLine.get(homeLine) ?? [];
-    list.push(outcome);
-    byHomeLine.set(homeLine, list);
-  }
+  const homeOutcomes = market.outcomes.filter(
+    (outcome) => outcome.name === homeTeam && outcome.point !== undefined
+  );
+  const awayOutcomes = market.outcomes.filter(
+    (outcome) => outcome.name === awayTeam && outcome.point !== undefined
+  );
 
   const prefix = spreadTypePrefix(marketKey);
   const family = handicapFamilyLabel(marketKey);
   const markets: MarketDTO[] = [];
+  const seenHomeLines = new Set<number>();
 
-  for (const [homeLine, outcomes] of byHomeLine) {
-    const seenSelections = new Set<string>();
-    const odds: OddDTO[] = [];
-    for (const outcome of outcomes) {
-      let selection = typeSafeName(outcome.name);
-      if (outcome.name === homeTeam) selection = "HOME";
-      else if (outcome.name === awayTeam) selection = "AWAY";
-      const selectionKey = `${selection}_${outcome.point}`;
-      if (seenSelections.has(selectionKey)) continue;
-      seenSelections.add(selectionKey);
-      const point = outcome.point!;
-      odds.push({
-        selection: selectionKey,
-        label: `${outcome.name} (${point > 0 ? `+${point}` : point})`,
-        value: outcome.price,
-      });
-    }
-    if (odds.length === 0) continue;
-    const sign = homeLine > 0 ? `+${homeLine}` : `${homeLine}`;
+  for (const homeOutcome of homeOutcomes) {
+    const homePoint = homeOutcome.point!;
+    if (seenHomeLines.has(homePoint)) continue;
+
+    const awayOutcome = awayOutcomes.find(
+      (outcome) => Math.abs((outcome.point ?? NaN) + homePoint) < 1e-9
+    );
+    if (!awayOutcome) continue;
+
+    seenHomeLines.add(homePoint);
+    const awayPoint = awayOutcome.point!;
+    const sign = homePoint > 0 ? `+${homePoint}` : `${homePoint}`;
+
     markets.push({
-      type: `${prefix}_${homeLine}`,
+      type: `${prefix}_${homePoint}`,
       label: `${family} - ${sign}`,
-      odds,
+      odds: [
+        {
+          selection: `HOME_${homePoint}`,
+          label: `${homeTeam} (${homePoint > 0 ? `+${homePoint}` : homePoint})`,
+          value: homeOutcome.price,
+        },
+        {
+          selection: `AWAY_${awayPoint}`,
+          label: `${awayTeam} (${awayPoint > 0 ? `+${awayPoint}` : awayPoint})`,
+          value: awayOutcome.price,
+        },
+      ],
     });
   }
 
@@ -571,10 +577,13 @@ async function findTargetEventSummary(): Promise<OddsApiEventSummary | null> {
   const apiKey = requireApiKey();
   // Force-cache + revalidate: no Vercel, o Data Cache do Next evita
   // bater de novo na The Odds API entre instâncias dentro do TTL.
-  const response = await fetch(`${ODDS_API_BASE_URL}/sports/${SPORT_KEY}/events?apiKey=${apiKey}`, {
-    cache: "force-cache",
-    next: { revalidate: CACHE_TTL_SECONDS },
-  });
+  const response = await fetch(
+    `${ODDS_API_BASE_URL}/sports/${SPORT_KEY}/events?apiKey=${apiKey}&_ds=${ODDS_FETCH_CACHE_BUST}`,
+    {
+      cache: "force-cache",
+      next: { revalidate: CACHE_TTL_SECONDS },
+    }
+  );
 
   logQuotaUsage(response, "findTargetEventSummary (/events — sem odds)");
 
@@ -599,6 +608,7 @@ async function fetchTargetEventOdds(eventId: string): Promise<OddsApiEvent | nul
     markets: ALL_MARKETS.join(","),
     bookmakers: PREFERRED_BOOKMAKER,
     oddsFormat: "decimal",
+    _ds: ODDS_FETCH_CACHE_BUST,
   });
 
   const response = await fetch(
@@ -710,3 +720,8 @@ export async function fetchOddsApiScores(): Promise<OddsApiScoreEvent[]> {
 }
 
 export const oddsApiProvider: MatchProvider = new OddsApiProvider();
+
+/** Invalida o cache em memória (ex.: após correção de handicap). */
+export function invalidateOddsListCache(): void {
+  listCache = null;
+}
