@@ -98,12 +98,14 @@ function drawNoBet(home: string, away: string, h: number, a: number): MarketDTO 
 
 function handicap(home: string, away: string, line: number, h: number, a: number): MarketDTO {
   const sign = line > 0 ? `+${line}` : `${line}`;
+  const awayPoint = -line;
+  const awaySign = awayPoint > 0 ? `+${awayPoint}` : `${awayPoint}`;
   return {
     type: `SPREADS_${line}`,
-    label: `Handicap asiático ${sign}`,
+    label: `Handicap - ${sign}`,
     odds: [
-      { selection: "HOME", label: `${home} ${sign}`, value: roundOdd(h) },
-      { selection: "AWAY", label: `${away} ${line > 0 ? -line : Math.abs(line)}`, value: roundOdd(a) },
+      { selection: `HOME_${line}`, label: `${home} (${sign})`, value: roundOdd(h) },
+      { selection: `AWAY_${awayPoint}`, label: `${away} (${awaySign})`, value: roundOdd(a) },
     ],
   };
 }

@@ -26,14 +26,57 @@ type RenderItem =
   | { kind: "group"; key: string; groupLabel: string; markets: Market[] };
 
 /**
- * Mercados de linha (over/under) do provedor sempre têm o formato
- * "<algo> - Mais/Menos de <linha>" (ver `mapLineMarkets`/`mapTeamLineMarkets`/
- * `mapPlayerLineMarkets` em `odds-api-provider.ts`). Agrupamos por "<algo>"
- * para juntar "Total de escanteios - Mais/Menos de 6.5", "7.5", "8.5" etc.
- * em um único card organizado (ordenado da menor para a maior linha), como
- * fazem as casas de aposta reais.
+ * Mercados de linha (over/under): "<algo> - Mais/Menos de <linha>".
+ * Handicaps: "<família> - <linha>" (ex.: "Handicap - -0.5").
+ * Fallback por `type` cobre odds já gravadas com rótulo antigo.
  */
 const LINE_LABEL_PATTERN = /^(.*) - Mais\/Menos de ([\d.]+)$/;
+const HANDICAP_LABEL_PATTERN =
+  /^(Handicap(?: de escanteios| de cartões)?(?: - 1º tempo)?|Handicap asiático) - ([+-]?[\d.]+)$/;
+const LEGACY_HANDICAP_LABEL_PATTERN =
+  /^(Handicap(?: asiático)?) ([+-]?[\d.]+)$/;
+const SPREAD_TYPE_PATTERN =
+  /^(?:ALTERNATE_)?SPREADS(_H1|_CORNERS|_CARDS)?_([+-]?[\d.]+)$/;
+
+function groupLabelForSpreadSuffix(suffix: string | undefined): string {
+  switch (suffix) {
+    case "_H1":
+      return "Handicap - 1º tempo";
+    case "_CORNERS":
+      return "Handicap de escanteios";
+    case "_CARDS":
+      return "Handicap de cartões";
+    default:
+      return "Handicap";
+  }
+}
+
+function parseGroupableMarket(market: Market): { groupLabel: string; line: number } | null {
+  const lineMatch = LINE_LABEL_PATTERN.exec(market.label);
+  if (lineMatch) {
+    return { groupLabel: lineMatch[1], line: Number(lineMatch[2]) };
+  }
+
+  const handicapMatch = HANDICAP_LABEL_PATTERN.exec(market.label);
+  if (handicapMatch) {
+    return { groupLabel: handicapMatch[1], line: Number(handicapMatch[2]) };
+  }
+
+  const legacyHandicap = LEGACY_HANDICAP_LABEL_PATTERN.exec(market.label);
+  if (legacyHandicap) {
+    return { groupLabel: legacyHandicap[1], line: Number(legacyHandicap[2]) };
+  }
+
+  const spreadType = SPREAD_TYPE_PATTERN.exec(market.type);
+  if (spreadType) {
+    return {
+      groupLabel: groupLabelForSpreadSuffix(spreadType[1]),
+      line: Number(spreadType[2]),
+    };
+  }
+
+  return null;
+}
 
 function buildRenderItems(markets: Market[]): RenderItem[] {
   const groupOrder: string[] = [];
@@ -41,14 +84,13 @@ function buildRenderItems(markets: Market[]): RenderItem[] {
   const singles: RenderItem[] = [];
 
   for (const market of markets) {
-    const match = LINE_LABEL_PATTERN.exec(market.label);
-    if (!match) {
+    const parsed = parseGroupableMarket(market);
+    if (!parsed) {
       singles.push({ kind: "single", key: market.id, market });
       continue;
     }
 
-    const groupLabel = match[1];
-    const line = Number(match[2]);
+    const { groupLabel, line } = parsed;
     if (!groupsByLabel.has(groupLabel)) {
       groupOrder.push(groupLabel);
       groupsByLabel.set(groupLabel, []);

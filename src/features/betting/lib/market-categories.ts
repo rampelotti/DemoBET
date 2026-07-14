@@ -31,9 +31,9 @@ export const CATEGORY_LABELS: Record<MarketCategory, string> = {
 
 export function categorizeMarketType(type: string): MarketCategory {
   if (type.startsWith("PLAYER_")) return "jogadores";
-  if (type.startsWith("CORNERS_")) return "escanteios";
-  if (type.startsWith("CARDS_")) return "cartoes";
-  if (type.includes("_H1")) return "primeiro-tempo";
+  if (type.startsWith("CORNERS_") || type.startsWith("SPREADS_CORNERS")) return "escanteios";
+  if (type.startsWith("CARDS_") || type.startsWith("SPREADS_CARDS")) return "cartoes";
+  if (type.includes("_H1") || type.startsWith("SPREADS_H1")) return "primeiro-tempo";
   if (
     type.startsWith("OVER_UNDER_") ||
     type.startsWith("TEAM_TOTAL_") ||

@@ -404,39 +404,86 @@ function mapMarket(market: OddsApiMarket, homeTeam: string, awayTeam: string): M
   }
 }
 
-/** Handicap / spreads — uma linha por `point`, com outcomes tal como na API. */
+/**
+ * Família de handicap para agrupamento na UI (um bloco expansível por família).
+ * Labels no formato "<família> - <linha>" — ver `HANDICAP_LABEL_PATTERN`.
+ */
+function handicapFamilyLabel(marketKey: string): string {
+  switch (marketKey) {
+    case "spreads_h1":
+    case "alternate_spreads_h1":
+      return "Handicap - 1º tempo";
+    case "alternate_spreads_corners":
+      return "Handicap de escanteios";
+    case "alternate_spreads_cards":
+      return "Handicap de cartões";
+    default:
+      return "Handicap";
+  }
+}
+
+/** Prefixo estável de `type` para dedupe entre `spreads` e `alternate_spreads`. */
+function spreadTypePrefix(marketKey: string): string {
+  switch (marketKey) {
+    case "spreads_h1":
+    case "alternate_spreads_h1":
+      return "SPREADS_H1";
+    case "alternate_spreads_corners":
+      return "SPREADS_CORNERS";
+    case "alternate_spreads_cards":
+      return "SPREADS_CARDS";
+    default:
+      return "SPREADS";
+  }
+}
+
+/**
+ * Handicap / spreads — um mercado por linha da casa (home point).
+ * A Odds API manda home=-1.5 e away=+1.5 como points separados; sem parear
+ * cada lado vira um card incompleto. Agrupamos pelo handicap do mandante.
+ */
 function mapSpreadMarkets(
   market: OddsApiMarket,
   homeTeam: string,
   awayTeam: string,
   marketKey: string
 ): MarketDTO[] {
-  const byPoint = new Map<number, OddsApiOutcome[]>();
+  const byHomeLine = new Map<number, OddsApiOutcome[]>();
   for (const outcome of market.outcomes) {
     if (outcome.point === undefined) continue;
-    const list = byPoint.get(outcome.point) ?? [];
+    const homeLine =
+      outcome.name === awayTeam ? -outcome.point : outcome.point;
+    const list = byHomeLine.get(homeLine) ?? [];
     list.push(outcome);
-    byPoint.set(outcome.point, list);
+    byHomeLine.set(homeLine, list);
   }
 
-  const prefix = typeSafeName(marketKey);
+  const prefix = spreadTypePrefix(marketKey);
+  const family = handicapFamilyLabel(marketKey);
   const markets: MarketDTO[] = [];
 
-  for (const [point, outcomes] of byPoint) {
-    const odds: OddDTO[] = outcomes.map((outcome) => {
+  for (const [homeLine, outcomes] of byHomeLine) {
+    const seenSelections = new Set<string>();
+    const odds: OddDTO[] = [];
+    for (const outcome of outcomes) {
       let selection = typeSafeName(outcome.name);
       if (outcome.name === homeTeam) selection = "HOME";
       else if (outcome.name === awayTeam) selection = "AWAY";
-      return {
-        selection: `${selection}_${point}`,
+      const selectionKey = `${selection}_${outcome.point}`;
+      if (seenSelections.has(selectionKey)) continue;
+      seenSelections.add(selectionKey);
+      const point = outcome.point!;
+      odds.push({
+        selection: selectionKey,
         label: `${outcome.name} (${point > 0 ? `+${point}` : point})`,
         value: outcome.price,
-      };
-    });
+      });
+    }
     if (odds.length === 0) continue;
+    const sign = homeLine > 0 ? `+${homeLine}` : `${homeLine}`;
     markets.push({
-      type: `${prefix}_${point}`,
-      label: `Handicap ${point}`,
+      type: `${prefix}_${homeLine}`,
+      label: `${family} - ${sign}`,
       odds,
     });
   }
